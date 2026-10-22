@@ -1,0 +1,10 @@
+news.csv
+fake_news_classification_project.zip
+report_fake_news.html
+generate_notebook.py
+generate_pdf_report.py
+train_and_evaluate.py
+gradio_app.py
+*.ipynb
+__pycache__
+.git

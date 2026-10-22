@@ -1,0 +1,5 @@
+Model,Accuracy (%),Precision,Recall,F1-Score,ROC-AUC
+Linear Support Vector (LinearSVC),93.69,0.9382,0.9352,0.9367,0.9833
+Logistic Regression,92.82,0.9234,0.9336,0.9285,0.9821
+Passive Aggressive Classifier,92.5,0.927,0.9226,0.9248,0.981
+Multinomial Naive Bayes,89.66,0.8769,0.9226,0.8992,0.9588

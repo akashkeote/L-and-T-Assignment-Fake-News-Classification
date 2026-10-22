@@ -1,0 +1,4 @@
+.vercel
+__pycache__/
+*.pyc
+fake_news_classification_project.zip
