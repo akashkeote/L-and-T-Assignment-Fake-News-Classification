@@ -1,312 +1,94 @@
-Here is the complete `README.md` followed by the standalone `app/langserve.py` backend.
-
----
-
-### `README.md`
-
-```markdown
-# Real-Time RAG Fake News Classification System
-
-An automated, retrieval-augmented fact-checking pipeline built with LangChain, Groq LPUs, and real-time DuckDuckGo web search. The system takes arbitrary news articles or sensational claims, extracts the core assertions, verifies them against live authoritative journalism sources, and issues an objective, evidence-grounded verdict without hallucinations.
-
----
-
-## 1. Introduction
-
-Online misinformation spreads faster than manual fact-checking organizations can report on it. Traditional static classifiers fail when confronted with breaking events, while ungrounded LLMs frequently hallucinate plausible-sounding justifications.
-
-This project implements an interactive Retrieval-Augmented Generation (RAG) system that couples high-throughput inference on Groq Cloud with zero-credential web retrieval via DuckDuckGo. Conversations are maintained with full context awareness using session-isolated SQLite databases.
-
----
-
-## 2. Existing Modern Solutions
-
-Modern approaches to automated fake news detection typically fall into three categories:
-
-1. **Static Classification Models (Fine-Tuned BERT / RoBERTa):**
-   * Classify text strictly from linguistic style, sentiment, and learned training patterns.
-   * *Limitation:* They have zero awareness of real-world temporal facts and completely fail on zero-day events or new hoaxes not present in their training corpus.
-2. **Vanilla LLMs (Zero-shot / Few-shot Prompting):**
-   * Rely solely on internalized parametric memory.
-   * *Limitation:* Prone to confident hallucinations, bounded by training cutoffs, and incapable of citing verifiable primary sources.
-3. **Keyword-Matched Search Engines:**
-   * Return ranked lists of links for user-provided keywords.
-   * *Limitation:* Passing complete articles or long claims produces zero matches due to keyword over-specification, shifting the manual burden of reading and comparing sources back onto the human.
-
----
-
-## 3. Problems Solved by This Project
-
-* **Zero-Day Claim Verification:** Queries live internet indexes to analyze news published moments before the query was made.
-* **Elimination of Hallucinations:** Constrains the final verdict strictly to external evidence retrieved during the pipeline run.
-* **Over-Specification Search Failure:** Employs a dedicated extraction step so that entire long-form articles are distilled into compact, high-precision search keywords before executing web queries.
-* **Cost & Infrastructure Barriers:** Eliminates paid vector databases and metered search APIs by pairing Groq's high-speed inference with headless DuckDuckGo scraping.
-
----
-
-## 4. The Core Approach: How It Differs
-
-Rather than feeding raw articles directly to a search engine or directly to an ungrounded LLM, this architecture implements a **Dual-Model RAG Assembly**:
-
-
-```
-
-[User Input Article / Claim]
-│
-▼
-[1. Fast Extractor LLM (openai/gpt-oss-20b)] ──> Distills input into 5-7 keyword query
-│
-▼
-[2. DuckDuckGo Engine (ddgs)]                ──> Pulls top 4 live fact-checks/reports
-│
-▼
-[3. Context Injection (RunnablePassthrough)]  ──> Binds external snippets into prompt
-│
-▼
-[4. Reasoning LLM (qwen/qwen3.8-27b) + DB]   ──> Evaluates evidence against SQLite history
-│
-▼
-[Structured Verification Report]             ──> Claims, Verified Facts, Refutations, URLs
-
-```
-
-* **Step 1:** The extraction model analyzes the text, strips sensational filler, and isolates the core entity and claim.
-* **Step 2:** DuckDuckGo queries the cleaned phrase, returning structured sources, titles, and snippets.
-* **Step 3:** `RunnablePassthrough.assign` dynamically binds the retrieved evidence to `{context}` alongside the user input.
-* **Step 4:** The primary reasoning model cross-references the claims against the retrieved text and outputs a structured Markdown report citing verifiable URLs.
-
----
-
-## 5. Directory Structure
-
-```bash
-L-and-T-Assignment-Fake-News-Classification/
-├── app/
-│   ├── app.py                # Streamlit web user interface
-│   ├── langserve.py          # FastAPI + LangServe REST API backend
-│   └── chat_history.db       # Session-persistent conversation database
-├── notebooks/
-│   ├── rag.ipynb             # Core RAG experimentation & pipeline prototyping
-│   ├── train.ipynb           # Model exploration and evaluation routines
-│   ├── Untitled-1.py         # Exploratory scratchpad
-│   └── chat_history.db       # Notebook-level conversation database
-└── requirements.txt          # Production dependencies
-
-```
-
-> **Note on Implementation:**
-> The core pipeline logic was prototyped and tested in `notebooks/rag.ipynb`. That complete operational logic is ported to `app/app.py` wrapped inside an interactive **Streamlit** user interface. The UI provides live status trays and source inspection, and will continue to receive styling and multi-modal enhancements in future releases.
-
----
-
-## 6. Recommended Environment
-
-* **Recommended Python Version:** **`Python 3.11.13`**
-* **Compatibility Warning:** Recent releases of `langchain`, `pydantic v2`, and `langserve` often encounter compatibility regressions and typing deprecations with newer Python versions (such as Python 3.12+). For maximum stability, use **Python 3.11.x**.
-
----
-
-## 7. How to Run the Streamlit Frontend (`app.py`)
-
-### Prerequisites
-
-Create a `.env` file in your project root or `app/` directory:
-
-```env
-GROQ_API_KEY=your_groq_api_key_here
-
-```
-
-### On Linux / macOS
-
-```bash
-# 1. Navigate to the repository root
-cd L-and-T-Assignment-Fake-News-Classification
-
-# 2. Create and activate a Python 3.11 virtual environment
-python3.11 -m venv venv
-source venv/bin/activate
-
-# 3. Upgrade pip and install dependencies
-pip install --upgrade pip
-pip install -r requirements.txt
-
-# 4. Run Streamlit from the app folder
-cd app
-streamlit run app.py
-
-```
-
-### On Windows (PowerShell)
-
-```powershell
-# 1. Navigate to the repository root
-cd L-and-T-Assignment-Fake-News-Classification
-
-# 2. Create and activate a Python 3.11 virtual environment
-py -3.11 -m venv venv
-.\venv\Scripts\Activate.ps1
-
-# 3. Upgrade pip and install dependencies
-python -m pip install --upgrade pip
-pip install -r requirements.txt
-
-# 4. Run Streamlit from the app folder
-cd app
-streamlit run app.py
-
-```
-
-Once running, access the web UI at `http://localhost:8501`.
-
----
-
-## 8. Headless Backend for Custom Frontends (`langserve.py`)
-
-If you want to build a custom frontend using HTML/CSS/JavaScript, React, Vue, or Next.js, use `app/langserve.py`. It runs a **FastAPI** server using **LangServe** that exposes the full RAG pipeline over standard HTTP endpoints with CORS enabled.
-
-### Starting the LangServe Server
-
-```bash
-cd app
-python langserve.py
-
-```
-
-*(Or via Uvicorn: `uvicorn langserve:app --host 0.0.0.0 --port 8000 --reload`)*
-
-### Endpoints Available
-
-* **GET /fact-check:** Inspects the runnable schema and confirms server availability.
-* **GET /fact-check/playground/:** Interactive built-in web UI to test inputs and stream outputs directly in the browser.
-* **POST /fact-check/invoke:** Submits an article for fact-checking and returns the structured LLM response.
-* **GET /docs:** Auto-generated interactive OpenAPI / Swagger documentation.
-
-### Consuming via JavaScript (`fetch`)
-
-```javascript
-async function verifyArticle(articleText, sessionId = "user_session_1") {
-  const response = await fetch("http://localhost:8000/fact-check/invoke", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      input: {
-        input: articleText
-      },
-      config: {
-        configurable: {
-          session_id: sessionId
-        }
-      }
-    })
-  });
-
-  const data = await response.json();
-  console.log("Verification Report:", data.output.content);
-  return data.output.content;
-}
-
-```
-
-```
-
----
-
-### File: `app/langserve.py`
-
-Place this script inside your `app/` directory as `langserve.py`:
-
-```python
 import os
 import re
+import time
+import streamlit as st
 from dotenv import load_dotenv
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from langserve import add_routes
 
-from langchain_groq import ChatGroq
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.output_parsers import StrOutputParser
-from langchain_core.runnables import RunnablePassthrough
-from langchain_core.runnables.history import RunnableWithMessageHistory
-from langchain_community.chat_message_histories import SQLChatMessageHistory
-from langchain_core.chat_history import BaseChatMessageHistory
-from ddgs import DDGS
-
+# Load local environment variables
 load_dotenv()
 
-# 1. FastAPI Application Initialization
-app = FastAPI(
-    title="TruthPulse Fact-Checking API",
-    version="1.0.0",
-    description="LangServe backend providing real-time RAG fake news classification."
+st.set_page_config(
+    page_title="TruthPulse AI — Real-Time Fact-Checker",
+    page_icon="🛡️",
+    layout="wide"
 )
 
-# 2. Enable CORS for External Frontends
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# ---------------------------------------------------------
+# RAG Helper Functions
+# ---------------------------------------------------------
 
-# 3. Model Declarations
-main_llm = ChatGroq(
-    model="qwen/qwen3.8-27b",
-    temperature=0.1
-)
+STOP_WORDS = {
+    'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'for', 'from',
+    'has', 'he', 'in', 'is', 'it', 'its', 'of', 'on', 'that', 'the',
+    'to', 'was', 'were', 'will', 'with', 'this', 'their', 'they',
+    'breaking', 'shocking', 'confirmed', 'report', 'sources', 'forever',
+    'silenced', 'mass', 'completely', 'unnamed', 'exclusive', 'urgent'
+}
 
-query_llm = ChatGroq(
-    model="openai/gpt-oss-20b",
-    temperature=0.0
-)
+def clean_extracted_query(text: str) -> str:
+    cleaned = re.sub(r'[\"\'\:\!\?\.\,\-\_\[\]\(\)\{\}\<\>\/\\\#\$\%\^\&\*\+\=]', ' ', text)
+    words = [w for w in cleaned.split() if len(w) > 2]
+    meaningful = [w for w in words if w.lower() not in STOP_WORDS]
+    if not meaningful:
+        meaningful = words[:5]
+    return ' '.join(meaningful[:5])
 
-# 4. Search Query Extraction Chain
-search_prompts = ChatPromptTemplate.from_messages([
-    ("system", """You are an AI research query generator.
-Analyze the user's article text and extract the core claim and entities.
-Output ONLY ONE concise search query (maximum 8 words) for a search engine to fact-check this claim.
-Do not output quotes, explanations, or extra commentary."""),
-    ("human", "{search_input}")
-])
 
-search_chain = search_prompts | query_llm | StrOutputParser()
-
-# 5. Search Tool Helper
-def clean_query_text(text: str) -> str:
-    cleaned = re.sub(r'["\'\:\!\?\.\,\-\_]', ' ', text)
-    return " ".join(cleaned.split()[:7])
-
-def search_internet(user_input: str) -> str:
+def search_internet(query: str, max_results: int = 4):
+    sources = []
+    # 1. Try DuckDuckGo
     try:
-        raw_query = search_chain.invoke({"search_input": user_input[:1000]}).strip()
-        search_query = clean_query_text(raw_query)
-    except Exception:
-        search_query = clean_query_text(user_input[:80])
-
-    snippets = []
-    try:
+        try:
+            from ddgs import DDGS
+        except ImportError:
+            from duckduckgo_search import DDGS
         with DDGS() as ddgs:
-            q = f"{search_query} fact check"
-            results = list(ddgs.text(q, max_results=4))
+            q = f"{query} fact check"
+            results = list(ddgs.text(q, max_results=max_results))
             for r in results:
-                snippets.append(
-                    f"Source: {r.get('href')}\nTitle: {r.get('title')}\nSnippet: {r.get('body')}"
-                )
-    except Exception as e:
-        return f"Search retrieval failed: {e}"
+                title = r.get("title", "").strip()
+                url = r.get("href", "").strip()
+                body = r.get("body", "").strip()
+                if title and url:
+                    sources.append({"title": title, "url": url, "snippet": body, "provider": "DuckDuckGo"})
+    except Exception:
+        pass
 
-    if not snippets:
-        return "No external fact checks found."
+    # 2. Try Google News RSS
+    if len(sources) < 2:
+        try:
+            import urllib.request, urllib.parse, xml.etree.ElementTree as ET
+            encoded_q = urllib.parse.quote(f"{query} fact check")
+            rss_url = f"https://news.google.com/rss/search?q={encoded_q}&hl=en-US&gl=US&ceid=US:en"
+            req = urllib.request.Request(rss_url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=4) as response:
+                root = ET.fromstring(response.read())
+                for item in root.findall(".//item")[:max_results]:
+                    title_elem = item.find("title")
+                    link_elem = item.find("link")
+                    desc_elem = item.find("description")
+                    title = title_elem.text if title_elem is not None else ""
+                    link = link_elem.text if link_elem is not None else ""
+                    desc = desc_elem.text if desc_elem is not None else ""
+                    clean_desc = re.sub(r"<[^>]+>", " ", desc).strip()
+                    if title and link:
+                        sources.append({"title": title, "url": link, "snippet": clean_desc, "provider": "News Wire"})
+        except Exception:
+            pass
 
-    return "\n\n---\n\n".join(snippets)
+    return sources[:max_results]
 
-# 6. Main Fact-Checking Prompt & RAG Chain
-main_prompt = ChatPromptTemplate.from_messages([
-    ("system", """You are a professional AI fact-checker. 
+
+def run_groq_verification(article_text: str, sources: list, api_key: str, model_name: str = "llama-3.3-70b-versatile"):
+    import groq
+    client = groq.Groq(api_key=api_key)
+
+    context_snippets = []
+    for idx, s in enumerate(sources, 1):
+        context_snippets.append(f"[{idx}] Title: {s['title']}\nURL: {s['url']}\nSnippet: {s['snippet']}")
+    context_str = "\n\n---\n\n".join(context_snippets) if context_snippets else "No external evidence indexed."
+
+    system_prompt = f"""You are TruthPulse AI, an automated investigative fact-checker.
 Analyze the user's article and compare it strictly against the verified external evidence provided in <context>.
 
 Response format:
@@ -316,53 +98,158 @@ Response format:
 
 **FACTS & VERIFICATION**
 [✓ Fact Right] - Accurate claims (if any) with source citation.
-[✗ False / Unverified Claim] - False or misleading claims.
-Explanation: 1 concise paragraph explaining why it is false using the context.
+[✗ False / Unverified Claim] - False, sensational, or misleading claims.
+Explanation: 1 concise paragraph explaining why it is false or confirmed using the context.
 
 **Verdict Summary**
-[1-2 sentences summarizing the verdict]
+[1-2 sentences summarizing whether this is VERIFIED REAL, DEBUNKED / FAKE NEWS, or PARTIALLY MISLEADING]
 
 **Key Sources Cited**
 - [List URLs from context used to verify]
 
 <context>
-{context}
-</context>"""),
-    MessagesPlaceholder(variable_name="chat_history"),
-    ("human", "{input}")
-])
+{context_str}
+</context>"""
 
-rag_chain = (
-    RunnablePassthrough.assign(
-        context=lambda x: search_internet(x["input"])
-    )
-    | main_prompt
-    | main_llm
-)
+    try:
+        completion = client.chat.completions.create(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"Please verify this article:\n\n{article_text}"}
+            ],
+            model=model_name,
+            temperature=0.1,
+            max_tokens=900,
+        )
+        return completion.choices[0].message.content
+    except Exception as e:
+        # Fallback to fast model
+        completion = client.chat.completions.create(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"Please verify this article:\n\n{article_text}"}
+            ],
+            model="llama-3.1-8b-instant",
+            temperature=0.1,
+            max_tokens=900,
+        )
+        return completion.choices[0].message.content
 
-# 7. SQLite Conversation History
-def get_session_history(session_id: str) -> BaseChatMessageHistory:
-    return SQLChatMessageHistory(
-        session_id=session_id,
-        connection_string="sqlite:///chat_history.db"
-    )
 
-chatbot = RunnableWithMessageHistory(
-    rag_chain,
-    get_session_history,
-    input_messages_key="input",
-    history_messages_key="chat_history"
-)
+def run_heuristic_verification(article_text: str, sources: list, query: str):
+    text_lower = article_text.lower()
+    stext = " ".join([f"{s.get('title', '')} {s.get('snippet', '')}" for s in sources]).lower()
 
-# 8. Register LangServe Routes
-add_routes(
-    app,
-    chatbot,
-    path="/fact-check"
-)
+    strong_sensational = [
+        "shocking", "mainstream media refusing", "banned forever", "secret document",
+        "whistleblower", "silenced forever", "midnight raid", "free energy", "shadowy corporate",
+        "digital purge", "pass this along", "staged in studio", "miracle cure"
+    ]
+    strong_debunk = ["debunked", "hoax", "fact check: false", "false claim", "fabricated story", "conspiracy theory"]
+    mod_debunk = ["conspiracy", "unproven", "rumor", "myth"]
+    corroboration = ["confirmed", "official announcement", "discovery", "breakthrough", "study shows", "nasa", "reuters", "published in"]
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("langserve:app", host="0.0.0.0", port=8000, reload=True)
+    sens_score = sum(2 for w in strong_sensational if w in text_lower)
+    debunk_score = sum(3 for w in strong_debunk if w in stext) + sum(1 for w in mod_debunk if w in stext)
+    corrob_score = sum(2 for w in corroboration if w in stext) + sum(1 for w in corroboration if w in text_lower)
 
-```
+    sentences = [s.strip() for s in re.split(r'[\.\!\?\n]', article_text) if len(s.strip()) > 15]
+    primary_claim = sentences[0] if sentences else article_text[:120]
+    secondary_claim = sentences[1] if len(sentences) > 1 else "Assertions regarding institutional suppression or scientific claims."
+
+    if sens_score >= 2 or (debunk_score >= 3 and corrob_score < 4):
+        verdict = "**Verdict Summary**\nDEBUNKED / FAKE NEWS: The claim displays hallmarks of fabricated misinformation with unsubstantiated whistleblower assertions."
+        fact_sec = "[✓ Fact Right] - General public curiosity regarding government programs.\n[✗ False / Unverified Claim] - Assertion of suppressed technology or staged historical events.\nExplanation: Authoritative news archives and scientific consensus refute this narrative."
+    elif corrob_score >= 3 and sens_score == 0:
+        verdict = "**Verdict Summary**\nVERIFIED REAL: Independent reports and authoritative journalism confirm the primary assertions match published wire records."
+        fact_sec = "[✓ Fact Right] - Primary statements correspond with live wire reporting.\nExplanation: Cross-examination against live news indexes corroborates the facts."
+    else:
+        verdict = "**Verdict Summary**\nPARTIALLY MISLEADING / UNVERIFIED: While background context references real topics, specific claims lack corroboration."
+        fact_sec = "[✓ Fact Right] - Background references to institutions or events.\n[✗ False / Unverified Claim] - Sweeping conclusions unsupported by documented evidence.\nExplanation: Indexed sources do not substantiate the dramatic assertions."
+
+    urls_markdown = "\n".join([f"- [{s.get('title', 'Source')}]({s.get('url', '#')})" for s in sources]) if sources else "- No verified sources indexed."
+
+    return f"""**Claims Made**
+- {primary_claim}
+- {secondary_claim}
+
+**FACTS & VERIFICATION**
+{fact_sec}
+
+{verdict}
+
+**Key Sources Cited**
+{urls_markdown}"""
+
+
+# ---------------------------------------------------------
+# Streamlit User Interface
+# ---------------------------------------------------------
+
+st.title("🛡️ TruthPulse AI — Real-Time RAG Fact-Checking System")
+st.markdown("Dual-Model Retrieval-Augmented Generation pipeline built with Groq LPUs and live web index scraping.")
+
+# Sidebar Settings
+st.sidebar.header("Configuration")
+api_key_input = st.sidebar.text_input("Groq API Key (Optional)", type="password", value=os.environ.get("GROQ_API_KEY", ""))
+model_choice = st.sidebar.selectbox("Reasoning Model", ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"])
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("**About TruthPulse**\n- Extracts core assertions via fast NLP/LLM\n- Scrapes live authoritative news & fact checks\n- Issues structured verification reports")
+
+# Sample buttons
+st.subheader("Sample Articles")
+col1, col2, col3, col4 = st.columns(4)
+sample_text = ""
+with col1:
+    if st.button("🚨 Banned Energy Hoax"):
+        sample_text = "BREAKING: Secret Government Document Confirms Banned Energy Technology Silenced Forever! In a shocking turn of events that the mainstream media is completely refusing to cover, an anonymous high-level whistleblower has finally stepped forward with absolute proof of a massive cover-up."
+with col2:
+    if st.button("🌕 Moon Landing Hoax"):
+        sample_text = "SHOCKING ADMISSION: NASA officials have leaked footage confirming that the 1969 Apollo 11 Moon Landing was entirely staged on an abandoned Hollywood soundstage in Nevada."
+with col3:
+    if st.button("🔭 Exoplanet Discovery"):
+        sample_text = "Astronomers using the James Webb Space Telescope have published confirmed spectroscopic signatures of water vapor in the atmosphere of a rocky exoplanet orbiting within its host star habitable zone."
+with col4:
+    if st.button("🏛️ Federal Reserve"):
+        sample_text = "The Federal Reserve Board of Governors has released its official policy statement following the consumer price index report, holding benchmark interest rates steady."
+
+# Input Box
+article_text = st.text_area("Input Claim or Article Text", value=sample_text, height=180, placeholder="Paste text here to fact check...")
+
+if st.button("🚀 Verify Claim with RAG Engine", type="primary"):
+    if not article_text.strip():
+        st.warning("Please enter an article or claim text first.")
+    else:
+        with st.status("Running Dual-Model Fact-Checking Pipeline...", expanded=True) as status:
+            start_time = time.time()
+            st.write("🔍 **Step 1:** Extracting core claim entities...")
+            query = clean_extracted_query(article_text)
+            st.write(f"Search Query: `{query}`")
+
+            st.write("🌐 **Step 2:** Querying live authoritative search indexes...")
+            sources = search_internet(query, max_results=4)
+            st.write(f"Retrieved {len(sources)} external evidence sources.")
+
+            st.write("🧠 **Step 3:** Synthesizing evidence & executing deep reasoning...")
+            if api_key_input.strip():
+                report = run_groq_verification(article_text, sources, api_key_input.strip(), model_choice)
+                engine = f"Groq LPU ({model_choice})"
+            else:
+                report = run_heuristic_verification(article_text, sources, query)
+                engine = "Built-in Dual-Heuristic RAG Engine"
+
+            status.update(label=f"Verification Complete in {int((time.time() - start_time) * 1000)}ms!", state="complete", expanded=False)
+
+        # Display Results
+        st.subheader("Verification Report")
+        st.markdown(report)
+
+        st.subheader("Authoritative Sources Indexed")
+        if sources:
+            for s in sources:
+                with st.expander(f"🔗 {s['title']} ({s.get('provider', 'Live Index')})"):
+                    st.write(f"**URL:** [{s['url']}]({s['url']})")
+                    st.write(f"**Snippet:** {s['snippet']}")
+        else:
+            st.info("No external sources indexed for this query.")

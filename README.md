@@ -1,5 +1,12 @@
 # Real-Time RAG Fake News Classification System
 
+[![Vercel Deployment](https://img.shields.io/badge/Vercel-Live%20Production-10b981?logo=vercel&logoColor=white)](https://fakenewsclassification.vercel.app)
+[![API Status](https://img.shields.io/badge/API-Active%20(LangServe%20%2B%20REST)-0284c7)](https://fakenewsclassification.vercel.app/fact-check)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+
+> **Live Production Website:** [https://fakenewsclassification.vercel.app](https://fakenewsclassification.vercel.app)  
+> **Interactive API Documentation:** [https://fakenewsclassification.vercel.app/docs](https://fakenewsclassification.vercel.app/docs)
+
 An automated, retrieval-augmented fact-checking pipeline built with LangChain, Groq LPUs, and real-time DuckDuckGo web search. The system takes arbitrary news articles or sensational claims, extracts the core assertions, verifies them against live authoritative journalism sources, and issues an objective, evidence-grounded verdict without hallucinations.
 
 ---

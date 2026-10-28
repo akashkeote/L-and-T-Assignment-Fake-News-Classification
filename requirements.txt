@@ -1,8 +1,9 @@
-dotenv
-langchain-community
-langchain-groq
-greenlit
-ddgs
-sqlalchemy[asyncio]
-fastapi
-sse-starlette
+fastapi>=0.110.0
+uvicorn>=0.28.0
+python-dotenv>=1.0.0
+requests>=2.31.0
+pydantic>=2.6.0
+groq>=0.9.0
+duckduckgo-search>=6.0.0
+ddgs>=8.0.0
+streamlit>=1.30.0

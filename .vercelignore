@@ -5,6 +5,11 @@ generate_notebook.py
 generate_pdf_report.py
 train_and_evaluate.py
 gradio_app.py
+notebooks/
 *.ipynb
-__pycache__
-.git
+*.db
+*.sqlite
+__pycache__/
+.git/
+.venv/
+venv/

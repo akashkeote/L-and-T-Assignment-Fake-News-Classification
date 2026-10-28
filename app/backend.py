@@ -1,5 +1,8 @@
 import os
 import re
+import urllib.request
+import urllib.parse
+import xml.etree.ElementTree as ET
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,7 +15,11 @@ from langchain_core.runnables import RunnablePassthrough
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_community.chat_message_histories import SQLChatMessageHistory
 from langchain_core.chat_history import BaseChatMessageHistory
-from ddgs import DDGS
+
+try:
+    from ddgs import DDGS
+except ImportError:
+    from duckduckgo_search import DDGS
 
 load_dotenv()
 
@@ -32,14 +39,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 3. Model Declarations
+# 3. Model Declarations (Configured with production-ready Groq models)
 main_llm = ChatGroq(
-    model="qwen/qwen3.8-27b",
+    model=os.environ.get("GROQ_MAIN_MODEL", "llama-3.3-70b-versatile"),
     temperature=0.1
 )
 
 query_llm = ChatGroq(
-    model="openai/gpt-oss-20b",
+    model=os.environ.get("GROQ_QUERY_MODEL", "llama-3.1-8b-instant"),
     temperature=0.0
 )
 
@@ -67,6 +74,7 @@ def search_internet(user_input: str) -> str:
         search_query = clean_query_text(user_input[:80])
 
     snippets = []
+    # 1. Try DuckDuckGo
     try:
         with DDGS() as ddgs:
             q = f"{search_query} fact check"
@@ -76,7 +84,28 @@ def search_internet(user_input: str) -> str:
                     f"Source: {r.get('href')}\nTitle: {r.get('title')}\nSnippet: {r.get('body')}"
                 )
     except Exception as e:
-        return f"Search retrieval failed: {e}"
+        pass
+
+    # 2. Resilient Fallback to Google News RSS if DDGS returns empty or rate-limits
+    if len(snippets) < 2:
+        try:
+            encoded_q = urllib.parse.quote(f"{search_query} fact check")
+            rss_url = f"https://news.google.com/rss/search?q={encoded_q}&hl=en-US&gl=US&ceid=US:en"
+            req = urllib.request.Request(rss_url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=4) as response:
+                root = ET.fromstring(response.read())
+                for item in root.findall(".//item")[:4]:
+                    title_elem = item.find("title")
+                    link_elem = item.find("link")
+                    desc_elem = item.find("description")
+                    title = title_elem.text if title_elem is not None else ""
+                    link = link_elem.text if link_elem is not None else ""
+                    desc = desc_elem.text if desc_elem is not None else ""
+                    clean_desc = re.sub(r"<[^>]+>", " ", desc).strip()
+                    if title and link:
+                        snippets.append(f"Source: {link}\nTitle: {title}\nSnippet: {clean_desc}")
+        except Exception:
+            pass
 
     if not snippets:
         return "No external fact checks found."
