@@ -1,99 +1,195 @@
-# PROJECT 15 — Machine Learning–Based Fake News Detector Using Text Classification
+# Real-Time RAG Fake News Classification System
 
-> **Sensitivity:** LNT Construction Internal Use  
-> **Live Production URL:** [https://fakenewsclassification.vercel.app](https://fakenewsclassification.vercel.app)  
-> **PDF Project Report:** [Download Report](https://fakenewsclassification.vercel.app/download-report)
+An automated, retrieval-augmented fact-checking pipeline built with LangChain, Groq LPUs, and real-time DuckDuckGo web search. The system takes arbitrary news articles or sensational claims, extracts the core assertions, verifies them against live authoritative journalism sources, and issues an objective, evidence-grounded verdict without hallucinations.
 
 ---
 
-## 📌 Executive Summary
-This project implements an end-to-end Machine Learning pipeline that filters misleading or fake news articles before publication. The system extracts textual features from article headlines and body content using TF-IDF n-grams (1-2 words), analyzes writing styles (capitalization ratios, word counts), and evaluates predictions using a tuned Linear Support Vector Classifier (LinearSVC).
+## 1. Introduction
 
-The application is deployed live on **Vercel Serverless** with a responsive **White Theme UI** and real-time Explainable AI (XAI) feature attribution.
+Online misinformation spreads faster than manual fact-checking organizations can report on it. Traditional static classifiers fail when confronted with breaking events, while ungrounded LLMs frequently hallucinate plausible-sounding justifications.
+
+This project implements an interactive Retrieval-Augmented Generation (RAG) system that couples high-throughput inference on Groq Cloud with zero-credential web retrieval via DuckDuckGo. Conversations are maintained with full context awareness using session-isolated SQLite databases.
 
 ---
 
-## 🚀 Live Demo & Endpoints
-* **Web Application:** `https://fakenewsclassification.vercel.app`
-* **Real-Time Prediction API:** `POST https://fakenewsclassification.vercel.app/api/predict`
-* **Model Statistics API:** `GET https://fakenewsclassification.vercel.app/api/stats`
-* **PDF Project Report:** `GET https://fakenewsclassification.vercel.app/download-report`
+## 2. Existing Modern Solutions
 
-### Sample Prediction Request
+Modern approaches to automated fake news detection typically fall into three categories:
+
+1. **Static Classification Models (Fine-Tuned BERT / RoBERTa):**
+   * Classify text strictly from linguistic style, sentiment, and learned training patterns.
+   * *Limitation:* They have zero awareness of real-world temporal facts and completely fail on zero-day events or new hoaxes not present in their training corpus.
+2. **Vanilla LLMs (Zero-shot / Few-shot Prompting):**
+   * Rely solely on internalized parametric memory.
+   * *Limitation:* Prone to confident hallucinations, bounded by training cutoffs, and incapable of citing verifiable primary sources.
+3. **Keyword-Matched Search Engines:**
+   * Return ranked lists of links for user-provided keywords.
+   * *Limitation:* Passing complete articles or long claims produces zero matches due to keyword over-specification, shifting the manual burden of reading and comparing sources back onto the human.
+
+---
+
+## 3. Problems Solved by This Project
+
+* **Zero-Day Claim Verification:** Queries live internet indexes to analyze news published moments before the query was made.
+* **Elimination of Hallucinations:** Constrains the final verdict strictly to external evidence retrieved during the pipeline run.
+* **Over-Specification Search Failure:** Employs a dedicated extraction step so that entire long-form articles are distilled into compact, high-precision search keywords before executing web queries.
+* **Cost & Infrastructure Barriers:** Eliminates paid vector databases and metered search APIs by pairing Groq's high-speed inference with headless DuckDuckGo scraping.
+
+---
+
+## 4. The Core Approach: How It Differs
+
+Rather than feeding raw articles directly to a search engine or directly to an ungrounded LLM, this architecture implements a **Dual-Model RAG Assembly**:
+
+[User Input Article / Claim]
+│
+▼
+[1. Fast Extractor LLM (openai/gpt-oss-20b)] ──> Distills input into 5-7 keyword query
+│
+▼
+[2. DuckDuckGo Engine (ddgs)]                ──> Pulls top 4 live fact-checks/reports
+│
+▼
+[3. Context Injection (RunnablePassthrough)]  ──> Binds external snippets into prompt
+│
+▼
+
+Note on Implementation:
+
+The core pipeline logic was prototyped and tested in notebooks/rag.ipynb. That complete operational logic is ported to app/app.py wrapped inside an interactive Streamlit user interface. The UI provides live status trays and source inspection, and will continue to receive styling and multi-modal enhancements in future releases.
+[4. Reasoning LLM (qwen/qwen3.8-27b) + DB]   ──> Evaluates evidence against SQLite history
+│
+▼
+[Structured Verification Report]             ──> Claims, Verified Facts, Refutations, URLs
+
+* **Step 1:** The extraction model analyzes the text, strips sensational filler, and isolates the core entity and claim.
+* **Step 2:** DuckDuckGo queries the cleaned phrase, returning structured sources, titles, and snippets.
+* **Step 3:** `RunnablePassthrough.assign` dynamically binds the retrieved evidence to `{context}` alongside the user input.
+* **Step 4:** The primary reasoning model cross-references the claims against the retrieved text and outputs a structured Markdown report citing verifiable URLs.
+
+---
+
+## 5. Directory Structure
+
 ```bash
-curl -X POST https://fakenewsclassification.vercel.app/api/predict \
-  -H "Content-Type: application/json" \
-  -d '{
-    "title": "Kerry to go to Paris in gesture of sympathy",
-    "content": "U.S. Secretary of State John F. Kerry said Monday that he will stop in Paris later this week."
-  }'
+L-and-T-Assignment-Fake-News-Classification/
+├── app/
+│   ├── app.py                # Streamlit web user interface
+│   ├── langserve.py          # FastAPI + LangServe REST API backend
+│   └── chat_history.db       # Session-persistent conversation database
+├── notebooks/
+│   ├── rag.ipynb             # Core RAG experimentation & pipeline prototyping
+│   ├── train.ipynb           # Model exploration and evaluation routines
+│   ├── Untitled-1.py         # Exploratory scratchpad
+│   └── chat_history.db       # Notebook-level conversation database
+└── requirements.txt          # Production dependencies
+
+Note on Implementation:
+
+|The core pipeline logic was prototyped and tested in notebooks/rag.ipynb. 
+|That complete operational logic is ported to app/app.py wrapped inside an interactive Streamlit user interface. 
+|The UI provides live status trays and source inspection, and will continue to receive styling and multi-modal enhancements in future releases.
+```
+## 6. Recommended Environment
+Recommended Python Version: Python 3.11.13
+
+
+Compatibility Warning: Recent releases of langchain, pydantic v2, and langserve often encounter compatibility regressions and typing deprecations with newer Python versions (such as Python 3.12+). For maximum stability, use Python 3.11.x.
+
+## 7. How to Run the Streamlit Frontend (app.py)
+Prerequisites
+* Create a .env file in your project root or app/ directory:
+
+* Code snippet
+```
+GROQ_API_KEY=your_groq_api_key_here
+```
+# 1. Navigate to the repository root
 ```
 
-### Sample Response
-```json
-{
-  "label": "REAL",
-  "confidence": 80.08,
-  "real_probability": 80.1,
-  "fake_probability": 19.9,
-  "decision_score": -1.391,
-  "risk_level": "Low",
-  "influential_real_terms": ["march", "sunday", "said", "monday", "kerry", "kerry said"],
-  "influential_fake_terms": [],
-  "metadata": {
-    "char_length": 232,
-    "word_count": 40,
-    "caps_ratio": 5.6,
-    "cleaned_tokens_count": 24
-  }
+cd L-and-T-Assignment-Fake-News-Classification
+```
+# 2. Create and activate a Python 3.11 virtual environment
+```
+python3.11 -m venv venv
+source venv/bin/activate
+```
+
+# 3. Upgrade pip and install dependencies
+```
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+# 4. Run Streamlit from the app folder
+```
+cd app
+streamlit run app.py
+```
+On Windows (PowerShell)
+PowerShell
+# 1. Navigate to the repository root
+```
+cd L-and-T-Assignment-Fake-News-Classification 
+```
+
+# 2. Create and activate a Python 3.11 virtual environment
+```
+py -3.11 -m venv venv
+.\venv\Scripts\Activate.ps1
+```
+
+# 3. Upgrade pip and install dependencies
+```
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+# 4. Run Streamlit from the app folder
+```
+cd app
+streamlit run app.py
+Once running, access the web UI at http://localhost:8501.
+```
+## 8. Headless Backend for Custom Frontends (langserve.py)
+If you want to build a custom frontend using HTML/CSS/JavaScript, React, Vue, or Next.js, use app/langserve.py. It runs a FastAPI server using LangServe that exposes the full RAG pipeline over standard HTTP endpoints with CORS enabled.
+
+Starting the LangServe Server
+Bash
+cd app
+python langserve.py
+(Or via Uvicorn: uvicorn langserve:app --host 0.0.0.0 --port 8000 --reload)
+
+Endpoints Available
+GET /fact-check: Inspects the runnable schema and confirms server availability.
+
+GET /fact-check/playground/: Interactive built-in web UI to test inputs and stream outputs directly in the browser.
+
+POST /fact-check/invoke: Submits an article for fact-checking and returns the structured LLM response.
+
+GET /docs: Auto-generated interactive OpenAPI / Swagger documentation.
+
+Consuming via JavaScript (fetch)
+JavaScript
+async function verifyArticle(articleText, sessionId = "user_session_1") {
+  const response = await fetch("http://localhost:8000/fact-check/invoke", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      input: {
+        input: articleText
+      },
+      config: {
+        configurable: {
+          session_id: sessionId
+        }
+      }
+    })
+  });
+
+  const data = await response.json();
+  console.log("Verification Report:", data.output.content);
+  return data.output.content;
 }
-```
-
----
-
-## 📊 Model Benchmark & Results
-Trained on **6,335 verified articles** (3,171 Real, 3,164 Fake) with an 80/20 stratified split:
-
-| Model | Accuracy | Macro F1 | Precision | Recall | ROC-AUC | Status |
-| :--- | :---: | :---: | :---: | :---: | :---: | :--- |
-| **LinearSVC (Tuned)** | **93.69%** | **0.9367** | **93.81%** | **93.54%** | **0.983** | **Production Deployed** |
-| **Logistic Regression** | 92.82% | 0.9279 | 93.12% | 0.9248 | 0.980 | Trained & Benchmarked |
-| **Passive Aggressive** | 92.50% | 0.9249 | 91.68% | 0.9347 | 0.975 | Trained & Benchmarked |
-| **Multinomial Naive Bayes** | 89.66% | 0.8962 | 90.80% | 0.8841 | 0.957 | Baseline Benchmark |
-
----
-
-## 📁 Repository Structure
-```
-fake_news_classification/
-├── api/
-│   ├── index.py                    # Flask serverless application & White UI
-│   ├── best_model.joblib           # Trained LinearSVC weights (64 KB)
-│   ├── tfidf_vectorizer.joblib     # Fitted TF-IDF Vectorizer (306 KB)
-│   ├── Fake_News_Classification_Project_Report.pdf
-│   └── plots/                      # High-resolution EDA and evaluation charts
-├── plots/                          # Visualizations (Confusion Matrix, ROC, etc.)
-├── best_model.joblib               # Root model checkpoint
-├── tfidf_vectorizer.joblib         # Root vectorizer checkpoint
-├── fake_news_detector.ipynb        # Complete interactive Jupyter Notebook
-├── train_and_evaluate.py           # Training and hyperparameter tuning script
-├── gradio_app.py                   # Local Gradio GUI script
-├── requirements.txt                # Vercel deployment dependencies
-├── vercel.json                     # Vercel serverless routing configuration
-├── Fake_News_Classification_Project_Report.pdf  # Comprehensive 5-page PDF report
-└── README.md                       # Project documentation
-```
-
----
-
-## 🛠️ Local Setup & Execution
-1. **Clone or extract project files**
-2. **Install requirements:**
-   ```bash
-   pip install -r requirements.txt
-   ```
-3. **Run local web application:**
-   ```bash
-   python api/index.py
-   ```
-   Open `http://localhost:5000` in your web browser.
