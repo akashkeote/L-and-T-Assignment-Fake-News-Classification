@@ -68,7 +68,6 @@ def search_live_ground_truth(query: str, max_results: int = 4) -> List[Dict[str,
             from duckduckgo_search import DDGS
         
         with DDGS() as ddgs:
-            # Try text search
             q = f"{query} fact check"
             results = list(ddgs.text(q, max_results=max_results))
             for r in results:
@@ -83,7 +82,6 @@ def search_live_ground_truth(query: str, max_results: int = 4) -> List[Dict[str,
                         "provider": "DuckDuckGo Web"
                     })
     except Exception:
-        # Pass silently to next tier if DuckDuckGo hits rate limits or blocks
         pass
 
     # 2. Try Google News RSS if sources < 2
@@ -175,7 +173,6 @@ Explanation: 1 concise paragraph explaining why it is false or confirmed using t
 """ + context_str + """
 </context>"""
 
-    # Model selection fallback
     chosen_model = model_name or "llama-3.3-70b-versatile"
 
     try:
@@ -191,7 +188,6 @@ Explanation: 1 concise paragraph explaining why it is false or confirmed using t
         report_text = chat_completion.choices[0].message.content
         return {"report": report_text, "engine": f"Groq LPU ({chosen_model})"}
     except Exception as e:
-        # If llama-3.3 fails or rate limits, try fast model llama-3.1-8b-instant
         if chosen_model != "llama-3.1-8b-instant":
             try:
                 chat_completion = client.chat.completions.create(
@@ -402,7 +398,6 @@ async def langserve_invoke(payload: Dict[str, Any]):
     """
     start_time = time.time()
     
-    # Extract article text
     article_text = ""
     if "input" in payload:
         if isinstance(payload["input"], dict):
@@ -458,7 +453,6 @@ async def api_verify(req: DirectVerifyInput):
     if not article_text:
         raise HTTPException(status_code=400, detail="Article text cannot be empty.")
 
-    # API key preference: Passed in request > Environment variable
     groq_key = (req.api_key or "").strip() or os.environ.get("GROQ_API_KEY")
     query = clean_extracted_query(article_text)
     sources = search_live_ground_truth(query, max_results=4)
@@ -473,7 +467,6 @@ async def api_verify(req: DirectVerifyInput):
             engine = result["engine"]
             claims = parsed["claims"]
         except Exception as e:
-            # Fallback to heuristic engine if user key has quota issues
             result = run_heuristic_fact_engine(article_text, sources, query)
             report_content = result["report"]
             verdict = result["verdict"]
@@ -507,7 +500,7 @@ async def api_verify(req: DirectVerifyInput):
 
 
 # ---------------------------------------------------------
-# Executive Modern Web UI (Pure SVG Icons, Linear Styling)
+# Executive UI (Default White / Light Mode + Dark Toggle)
 # ---------------------------------------------------------
 
 HTML_PAGE = """<!DOCTYPE html>
@@ -518,20 +511,107 @@ HTML_PAGE = """<!DOCTYPE html>
   <title>TruthPulse AI — Real-Time RAG Fact-Checking System</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
+    /* =========================================================
+       CSS THEME VARIABLES (Default: White / Pristine Light Mode)
+       ========================================================= */
     :root {
+      /* Default: Pristine Light Mode */
+      --bg: #f8fafc;
+      --card-bg: #ffffff;
+      --card-border: #e2e8f0;
+      --card-border-hover: #cbd5e1;
+      --input-bg: #ffffff;
+      --text-main: #0f172a;
+      --text-muted: #475569;
+      --text-dim: #64748b;
+      --brand-gradient: linear-gradient(135deg, #4f46e5, #2563eb);
+      --primary-btn: linear-gradient(135deg, #4f46e5, #2563eb);
+      --primary-btn-hover: linear-gradient(135deg, #4338ca, #1d4ed8);
+      --accent-blue: #2563eb;
+      --accent-indigo: #4f46e5;
+      --accent-emerald: #059669;
+      --accent-rose: #e11d48;
+      --accent-amber: #d97706;
+      --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+      --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -2px rgba(0, 0, 0, 0.03);
+      --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -4px rgba(0, 0, 0, 0.04);
+      --nav-bg: rgba(255, 255, 255, 0.92);
+      --pill-bg: #f1f5f9;
+      --pill-hover: #e2e8f0;
+      --hero-title-grad: linear-gradient(180deg, #0f172a 0%, #334155 100%);
+      --hero-badge-bg: #eef2ff;
+      --hero-badge-border: #c7d2fe;
+      --hero-badge-color: #4f46e5;
+      --step-active-bg: #eef2ff;
+      --step-active-color: #4f46e5;
+      --report-bg: #f8fafc;
+      --report-border: #e2e8f0;
+      --report-text: #1e293b;
+      --badge-debunked-bg: #fff1f2;
+      --badge-debunked-border: #fecdd3;
+      --badge-debunked-color: #e11d48;
+      --badge-real-bg: #ecfdf5;
+      --badge-real-border: #a7f3d0;
+      --badge-real-color: #059669;
+      --badge-misleading-bg: #fffbeb;
+      --badge-misleading-border: #fde68a;
+      --badge-misleading-color: #d97706;
+      --source-card-bg: #ffffff;
+      --source-card-hover: #f8fafc;
+      --code-block-bg: #0f172a;
+      --code-block-border: #1e293b;
+      --code-block-color: #38bdf8;
+    }
+
+    [data-theme="dark"] {
+      /* Dark Theme */
       --bg: #090d16;
       --card-bg: #0f172a;
       --card-border: #1e293b;
-      --accent-blue: #38bdf8;
-      --accent-emerald: #10b981;
-      --accent-rose: #f43f5e;
-      --accent-amber: #f59e0b;
+      --card-border-hover: #334155;
+      --input-bg: #0b1120;
       --text-main: #f8fafc;
       --text-muted: #94a3b8;
       --text-dim: #64748b;
-      --input-bg: #0b1120;
+      --brand-gradient: linear-gradient(135deg, #0284c7, #2563eb);
+      --primary-btn: linear-gradient(135deg, #0284c7, #2563eb);
+      --primary-btn-hover: linear-gradient(135deg, #0369a1, #1d4ed8);
+      --accent-blue: #38bdf8;
+      --accent-indigo: #818cf8;
+      --accent-emerald: #10b981;
+      --accent-rose: #f43f5e;
+      --accent-amber: #f59e0b;
+      --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
+      --shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+      --shadow-lg: 0 10px 25px -3px rgba(0, 0, 0, 0.5);
+      --nav-bg: rgba(15, 23, 42, 0.88);
+      --pill-bg: #0b1120;
+      --pill-hover: #131c31;
+      --hero-title-grad: linear-gradient(180deg, #ffffff 0%, #94a3b8 100%);
+      --hero-badge-bg: rgba(56, 189, 248, 0.08);
+      --hero-badge-border: rgba(56, 189, 248, 0.25);
+      --hero-badge-color: #38bdf8;
+      --step-active-bg: #1e293b;
+      --step-active-color: #38bdf8;
+      --report-bg: #0b1120;
+      --report-border: #1e293b;
+      --report-text: #cbd5e1;
+      --badge-debunked-bg: rgba(244, 63, 94, 0.12);
+      --badge-debunked-border: rgba(244, 63, 94, 0.35);
+      --badge-debunked-color: #f43f5e;
+      --badge-real-bg: rgba(16, 185, 129, 0.12);
+      --badge-real-border: rgba(16, 185, 129, 0.35);
+      --badge-real-color: #10b981;
+      --badge-misleading-bg: rgba(245, 158, 11, 0.12);
+      --badge-misleading-border: rgba(245, 158, 11, 0.35);
+      --badge-misleading-color: #f59e0b;
+      --source-card-bg: #0b1120;
+      --source-card-hover: #131c31;
+      --code-block-bg: #0b1120;
+      --code-block-border: #1e293b;
+      --code-block-color: #38bdf8;
     }
 
     * {
@@ -548,6 +628,7 @@ HTML_PAGE = """<!DOCTYPE html>
       min-height: 100vh;
       display: flex;
       flex-direction: column;
+      transition: background-color 0.2s ease, color 0.2s ease;
     }
 
     .container {
@@ -560,18 +641,19 @@ HTML_PAGE = """<!DOCTYPE html>
     /* Header */
     header {
       border-bottom: 1px solid var(--card-border);
-      background: rgba(15, 23, 42, 0.7);
+      background: var(--nav-bg);
       backdrop-filter: blur(12px);
       position: sticky;
       top: 0;
       z-index: 50;
+      transition: background 0.2s ease, border-color 0.2s ease;
     }
 
     .header-inner {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      padding: 1rem 1.5rem;
+      padding: 0.85rem 1.5rem;
       max-width: 1180px;
       margin: 0 auto;
     }
@@ -587,12 +669,12 @@ HTML_PAGE = """<!DOCTYPE html>
     .brand-icon {
       width: 36px;
       height: 36px;
-      border-radius: 8px;
-      background: linear-gradient(135deg, #0284c7, #2563eb);
+      border-radius: 9px;
+      background: var(--brand-gradient);
       display: flex;
       align-items: center;
       justify-content: center;
-      box-shadow: 0 4px 14px rgba(37, 99, 235, 0.35);
+      box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
     }
 
     .brand-title {
@@ -603,40 +685,79 @@ HTML_PAGE = """<!DOCTYPE html>
 
     .brand-tag {
       font-size: 0.7rem;
-      background: #1e293b;
-      color: var(--accent-blue);
+      background: var(--pill-bg);
+      color: var(--accent-indigo);
       padding: 2px 8px;
       border-radius: 9999px;
-      border: 1px solid rgba(56, 189, 248, 0.2);
+      border: 1px solid var(--card-border);
       font-family: 'JetBrains Mono', monospace;
-      font-weight: 600;
+      font-weight: 700;
     }
 
-    .nav-links {
+    .nav-actions {
       display: flex;
       align-items: center;
-      gap: 1rem;
+      gap: 0.75rem;
     }
 
     .nav-link {
       color: var(--text-muted);
       text-decoration: none;
-      font-size: 0.875rem;
-      font-weight: 500;
+      font-size: 0.85rem;
+      font-weight: 600;
       transition: color 0.15s ease;
       display: flex;
       align-items: center;
       gap: 0.4rem;
+      padding: 0.4rem 0.6rem;
+      border-radius: 6px;
     }
 
     .nav-link:hover {
       color: var(--text-main);
+      background: var(--pill-bg);
+    }
+
+    /* Theme Switcher Button */
+    .theme-toggle {
+      background: var(--pill-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      padding: 0.45rem 0.85rem;
+      color: var(--text-main);
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      transition: all 0.15s ease;
+      user-select: none;
+    }
+
+    .theme-toggle:hover {
+      background: var(--pill-hover);
+      border-color: var(--card-border-hover);
+    }
+
+    /* Theme Icon Visibility */
+    :root:not([data-theme="dark"]) .sun-icon {
+      display: none;
+    }
+    :root:not([data-theme="dark"]) .moon-icon {
+      display: inline-block;
+    }
+    [data-theme="dark"] .moon-icon {
+      display: none;
+    }
+    [data-theme="dark"] .sun-icon {
+      display: inline-block;
     }
 
     /* Hero Banner */
     .hero {
       text-align: center;
-      padding: 2.5rem 0 1.5rem;
+      padding: 2.25rem 0 1.25rem;
     }
 
     .hero-badge {
@@ -644,22 +765,22 @@ HTML_PAGE = """<!DOCTYPE html>
       align-items: center;
       gap: 0.5rem;
       padding: 0.35rem 0.9rem;
-      background: rgba(56, 189, 248, 0.08);
-      border: 1px solid rgba(56, 189, 248, 0.25);
+      background: var(--hero-badge-bg);
+      border: 1px solid var(--hero-badge-border);
       border-radius: 9999px;
-      color: var(--accent-blue);
-      font-size: 0.8rem;
-      font-weight: 600;
-      margin-bottom: 1.25rem;
+      color: var(--hero-badge-color);
+      font-size: 0.775rem;
+      font-weight: 700;
+      margin-bottom: 1.1rem;
       font-family: 'JetBrains Mono', monospace;
     }
 
     .hero-title {
-      font-size: 2.5rem;
+      font-size: 2.4rem;
       font-weight: 800;
       letter-spacing: -0.03em;
-      margin-bottom: 0.75rem;
-      background: linear-gradient(180deg, #ffffff 0%, #94a3b8 100%);
+      margin-bottom: 0.6rem;
+      background: var(--hero-title-grad);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
     }
@@ -680,9 +801,10 @@ HTML_PAGE = """<!DOCTYPE html>
       border: 1px solid var(--card-border);
       border-radius: 12px;
       padding: 1rem 1.5rem;
-      margin: 2rem 0;
+      margin: 1.75rem 0 1.25rem;
       gap: 0.75rem;
       flex-wrap: wrap;
+      box-shadow: var(--shadow-sm);
     }
 
     .pipeline-step {
@@ -694,21 +816,21 @@ HTML_PAGE = """<!DOCTYPE html>
     }
 
     .pipeline-step.active {
-      color: var(--accent-blue);
-      font-weight: 600;
+      color: var(--accent-indigo);
+      font-weight: 700;
     }
 
     .pipeline-step-num {
-      width: 22px;
-      height: 22px;
+      width: 24px;
+      height: 24px;
       border-radius: 50%;
-      background: #1e293b;
+      background: var(--step-active-bg);
       display: flex;
       align-items: center;
       justify-content: center;
       font-size: 0.75rem;
-      font-weight: 700;
-      color: var(--text-main);
+      font-weight: 800;
+      color: var(--step-active-color);
       font-family: 'JetBrains Mono', monospace;
     }
 
@@ -722,7 +844,7 @@ HTML_PAGE = """<!DOCTYPE html>
       display: grid;
       grid-template-columns: 1.15fr 0.85fr;
       gap: 1.5rem;
-      margin-top: 1rem;
+      margin-top: 0.5rem;
     }
 
     @media (max-width: 900px) {
@@ -738,6 +860,8 @@ HTML_PAGE = """<!DOCTYPE html>
       border-radius: 14px;
       padding: 1.5rem;
       position: relative;
+      box-shadow: var(--shadow);
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
     }
 
     .card-header {
@@ -749,13 +873,14 @@ HTML_PAGE = """<!DOCTYPE html>
 
     .card-title {
       font-size: 1.1rem;
-      font-weight: 700;
+      font-weight: 800;
       display: flex;
       align-items: center;
       gap: 0.5rem;
+      color: var(--text-main);
     }
 
-    /* Input Controls */
+    /* Textarea Controls */
     textarea {
       width: 100%;
       height: 180px;
@@ -768,18 +893,18 @@ HTML_PAGE = """<!DOCTYPE html>
       font-size: 0.925rem;
       resize: vertical;
       outline: none;
-      transition: border-color 0.2s ease;
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
       line-height: 1.5;
     }
 
     textarea:focus {
-      border-color: var(--accent-blue);
-      box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.15);
+      border-color: var(--accent-indigo);
+      box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.12);
     }
 
     .samples-label {
-      font-size: 0.8rem;
-      font-weight: 600;
+      font-size: 0.775rem;
+      font-weight: 700;
       color: var(--text-dim);
       text-transform: uppercase;
       letter-spacing: 0.05em;
@@ -794,7 +919,7 @@ HTML_PAGE = """<!DOCTYPE html>
     }
 
     .sample-pill {
-      background: #0b1120;
+      background: var(--pill-bg);
       border: 1px solid var(--card-border);
       border-radius: 8px;
       padding: 0.6rem 0.75rem;
@@ -809,30 +934,30 @@ HTML_PAGE = """<!DOCTYPE html>
     }
 
     .sample-pill:hover {
-      background: #131c31;
-      border-color: #334155;
+      background: var(--pill-hover);
+      border-color: var(--card-border-hover);
       color: var(--text-main);
     }
 
     .sample-tag {
       font-size: 0.65rem;
-      font-weight: 700;
-      padding: 1px 6px;
+      font-weight: 800;
+      padding: 2px 6px;
       border-radius: 4px;
       font-family: 'JetBrains Mono', monospace;
       flex-shrink: 0;
     }
 
     .tag-fake {
-      background: rgba(244, 63, 94, 0.15);
-      color: var(--accent-rose);
-      border: 1px solid rgba(244, 63, 94, 0.3);
+      background: var(--badge-debunked-bg);
+      color: var(--badge-debunked-color);
+      border: 1px solid var(--badge-debunked-border);
     }
 
     .tag-real {
-      background: rgba(16, 185, 129, 0.15);
-      color: var(--accent-emerald);
-      border: 1px solid rgba(16, 185, 129, 0.3);
+      background: var(--badge-real-bg);
+      color: var(--badge-real-color);
+      border: 1px solid var(--badge-real-border);
     }
 
     /* Advanced Settings Drawer */
@@ -845,6 +970,7 @@ HTML_PAGE = """<!DOCTYPE html>
       gap: 0.4rem;
       margin-bottom: 0.75rem;
       user-select: none;
+      font-weight: 600;
     }
 
     .settings-toggle:hover {
@@ -852,7 +978,7 @@ HTML_PAGE = """<!DOCTYPE html>
     }
 
     .settings-box {
-      background: #0b1120;
+      background: var(--pill-bg);
       border: 1px solid var(--card-border);
       border-radius: 8px;
       padding: 1rem;
@@ -879,12 +1005,12 @@ HTML_PAGE = """<!DOCTYPE html>
       font-size: 0.75rem;
       color: var(--text-dim);
       margin-bottom: 0.35rem;
-      font-weight: 600;
+      font-weight: 700;
     }
 
     .input-group input, .input-group select {
       width: 100%;
-      background: #0f172a;
+      background: var(--card-bg);
       border: 1px solid var(--card-border);
       border-radius: 6px;
       padding: 0.5rem 0.75rem;
@@ -894,17 +1020,17 @@ HTML_PAGE = """<!DOCTYPE html>
     }
 
     .input-group input:focus, .input-group select:focus {
-      border-color: var(--accent-blue);
+      border-color: var(--accent-indigo);
     }
 
     /* Action Button */
     .btn-verify {
       width: 100%;
-      background: linear-gradient(135deg, #0284c7, #2563eb);
+      background: var(--primary-btn);
       color: #ffffff;
       border: none;
       border-radius: 10px;
-      padding: 0.9rem 1.5rem;
+      padding: 0.85rem 1.5rem;
       font-size: 0.95rem;
       font-weight: 700;
       cursor: pointer;
@@ -912,12 +1038,12 @@ HTML_PAGE = """<!DOCTYPE html>
       align-items: center;
       justify-content: center;
       gap: 0.5rem;
-      box-shadow: 0 4px 14px rgba(37, 99, 235, 0.4);
+      box-shadow: 0 4px 14px rgba(79, 70, 229, 0.3);
       transition: all 0.2s ease;
     }
 
     .btn-verify:hover {
-      background: linear-gradient(135deg, #0369a1, #1d4ed8);
+      background: var(--primary-btn-hover);
       transform: translateY(-1px);
     }
 
@@ -927,7 +1053,7 @@ HTML_PAGE = """<!DOCTYPE html>
       transform: none;
     }
 
-    /* Status Card (Right column) */
+    /* Verdict Banner (Right column) */
     .verdict-banner {
       border-radius: 12px;
       padding: 1.25rem;
@@ -936,25 +1062,26 @@ HTML_PAGE = """<!DOCTYPE html>
       align-items: center;
       justify-content: space-between;
       border: 1px solid var(--card-border);
-      background: #0b1120;
+      background: var(--pill-bg);
+      box-shadow: var(--shadow-sm);
     }
 
     .badge-debunked {
-      background: rgba(244, 63, 94, 0.12);
-      border: 1px solid rgba(244, 63, 94, 0.35);
-      color: var(--accent-rose);
+      background: var(--badge-debunked-bg);
+      border: 1px solid var(--badge-debunked-border);
+      color: var(--badge-debunked-color);
     }
 
     .badge-real {
-      background: rgba(16, 185, 129, 0.12);
-      border: 1px solid rgba(16, 185, 129, 0.35);
-      color: var(--accent-emerald);
+      background: var(--badge-real-bg);
+      border: 1px solid var(--badge-real-border);
+      color: var(--badge-real-color);
     }
 
     .badge-misleading {
-      background: rgba(245, 158, 11, 0.12);
-      border: 1px solid rgba(245, 158, 11, 0.35);
-      color: var(--accent-amber);
+      background: var(--badge-misleading-bg);
+      border: 1px solid var(--badge-misleading-border);
+      color: var(--badge-misleading-color);
     }
 
     .verdict-info h3 {
@@ -964,25 +1091,26 @@ HTML_PAGE = """<!DOCTYPE html>
     }
 
     .verdict-info p {
-      font-size: 0.8rem;
-      color: var(--text-muted);
+      font-size: 0.825rem;
       margin-top: 2px;
+      opacity: 0.9;
     }
 
     .confidence-pill {
       font-family: 'JetBrains Mono', monospace;
       font-size: 0.85rem;
-      font-weight: 700;
+      font-weight: 800;
       padding: 4px 10px;
       border-radius: 6px;
-      background: #0f172a;
+      background: var(--card-bg);
       border: 1px solid var(--card-border);
+      color: var(--text-main);
     }
 
     /* Detail Sections */
     .section-title {
-      font-size: 0.85rem;
-      font-weight: 700;
+      font-size: 0.825rem;
+      font-weight: 800;
       text-transform: uppercase;
       letter-spacing: 0.05em;
       color: var(--text-dim);
@@ -1000,8 +1128,8 @@ HTML_PAGE = """<!DOCTYPE html>
     }
 
     .claims-list li {
-      background: #0b1120;
-      border-left: 3px solid var(--accent-blue);
+      background: var(--pill-bg);
+      border-left: 3px solid var(--accent-indigo);
       padding: 0.6rem 0.8rem;
       border-radius: 0 6px 6px 0;
       font-size: 0.85rem;
@@ -1009,13 +1137,13 @@ HTML_PAGE = """<!DOCTYPE html>
     }
 
     .report-preview {
-      background: #0b1120;
-      border: 1px solid var(--card-border);
+      background: var(--report-bg);
+      border: 1px solid var(--report-border);
       border-radius: 8px;
       padding: 1rem;
       font-size: 0.85rem;
       line-height: 1.6;
-      color: #cbd5e1;
+      color: var(--report-text);
       white-space: pre-wrap;
       max-height: 240px;
       overflow-y: auto;
@@ -1024,21 +1152,23 @@ HTML_PAGE = """<!DOCTYPE html>
 
     /* Source Links */
     .source-card {
-      background: #0b1120;
+      background: var(--source-card-bg);
       border: 1px solid var(--card-border);
       border-radius: 8px;
       padding: 0.75rem 0.9rem;
       margin-bottom: 0.6rem;
-      transition: border-color 0.15s ease;
+      transition: border-color 0.15s ease, background-color 0.15s ease;
+      box-shadow: var(--shadow-sm);
     }
 
     .source-card:hover {
-      border-color: #334155;
+      border-color: var(--card-border-hover);
+      background-color: var(--source-card-hover);
     }
 
     .source-card a {
       color: var(--accent-blue);
-      font-weight: 600;
+      font-weight: 700;
       font-size: 0.825rem;
       text-decoration: none;
       display: flex;
@@ -1063,11 +1193,13 @@ HTML_PAGE = """<!DOCTYPE html>
 
     .source-badge {
       font-size: 0.65rem;
-      background: #1e293b;
+      background: var(--pill-bg);
       color: var(--text-dim);
       padding: 2px 6px;
       border-radius: 4px;
       font-family: 'JetBrains Mono', monospace;
+      font-weight: 700;
+      border: 1px solid var(--card-border);
     }
 
     /* Export Actions */
@@ -1079,13 +1211,13 @@ HTML_PAGE = """<!DOCTYPE html>
 
     .btn-secondary {
       flex: 1;
-      background: #1e293b;
+      background: var(--pill-bg);
       color: var(--text-main);
       border: 1px solid var(--card-border);
       border-radius: 6px;
       padding: 0.5rem 0.75rem;
       font-size: 0.8rem;
-      font-weight: 600;
+      font-weight: 700;
       cursor: pointer;
       display: inline-flex;
       align-items: center;
@@ -1095,26 +1227,27 @@ HTML_PAGE = """<!DOCTYPE html>
     }
 
     .btn-secondary:hover {
-      background: #334155;
+      background: var(--pill-hover);
     }
 
     /* API Reference Box */
     .api-drawer {
-      margin-top: 2.5rem;
+      margin-top: 2rem;
       background: var(--card-bg);
       border: 1px solid var(--card-border);
       border-radius: 14px;
       padding: 1.5rem;
+      box-shadow: var(--shadow);
     }
 
     .code-block {
-      background: #0b1120;
-      border: 1px solid var(--card-border);
+      background: var(--code-block-bg);
+      border: 1px solid var(--code-block-border);
       border-radius: 8px;
       padding: 0.9rem 1.1rem;
       font-family: 'JetBrains Mono', monospace;
       font-size: 0.8rem;
-      color: #38bdf8;
+      color: var(--code-block-color);
       overflow-x: auto;
       margin-top: 0.5rem;
     }
@@ -1129,7 +1262,6 @@ HTML_PAGE = """<!DOCTYPE html>
       font-size: 0.8rem;
     }
 
-    /* SVGs */
     svg {
       flex-shrink: 0;
     }
@@ -1153,7 +1285,26 @@ HTML_PAGE = """<!DOCTYPE html>
         <span class="brand-tag">RAG v1.0</span>
       </a>
 
-      <div class="nav-links">
+      <div class="nav-actions">
+        <!-- Theme Switcher Toggle (White default + Dark option) -->
+        <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="Toggle color scheme">
+          <svg class="moon-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+          </svg>
+          <svg class="sun-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="5"></circle>
+            <line x1="12" y1="1" x2="12" y2="3"></line>
+            <line x1="12" y1="21" x2="12" y2="23"></line>
+            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+            <line x1="1" y1="12" x2="3" y2="12"></line>
+            <line x1="21" y1="12" x2="23" y2="12"></line>
+            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+          </svg>
+          <span id="themeText">Dark Mode</span>
+        </button>
+
         <a href="/docs" target="_blank" class="nav-link">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/><path d="M6 6h10M6 10h10"/></svg>
           API Docs
@@ -1320,17 +1471,17 @@ HTML_PAGE = """<!DOCTYPE html>
 
     <!-- API Reference Card -->
     <div class="api-drawer">
-      <h3 style="font-size: 1.05rem; font-weight: 700; margin-bottom: 0.4rem;">Team LangServe & REST API Integration</h3>
+      <h3 style="font-size: 1.05rem; font-weight: 800; margin-bottom: 0.4rem; color: var(--text-main);">Team LangServe & REST API Integration</h3>
       <p style="font-size: 0.825rem; color: var(--text-muted); margin-bottom: 0.75rem;">
         This deployment exposes production-ready endpoints compatible with the team's LangServe schema and standard HTTP clients.
       </p>
 
-      <div style="font-size: 0.75rem; color: var(--accent-blue); font-weight: 600;">LangServe POST /fact-check/invoke:</div>
+      <div style="font-size: 0.75rem; color: var(--accent-indigo); font-weight: 700;">LangServe POST /fact-check/invoke:</div>
       <div class="code-block">curl -X POST https://fakenewsclassification.vercel.app/fact-check/invoke \
   -H "Content-Type: application/json" \
   -d '{"input": {"input": "Secret government document confirms banned free energy"}, "config": {"configurable": {"session_id": "team_session_1"}}}'</div>
 
-      <div style="font-size: 0.75rem; color: var(--accent-blue); font-weight: 600; margin-top: 0.75rem;">Direct REST API POST /api/verify:</div>
+      <div style="font-size: 0.75rem; color: var(--accent-indigo); font-weight: 700; margin-top: 0.75rem;">Direct REST API POST /api/verify:</div>
       <div class="code-block">curl -X POST https://fakenewsclassification.vercel.app/api/verify \
   -H "Content-Type: application/json" \
   -d '{"text": "James Webb Space Telescope detects water vapor on exoplanet"}'</div>
@@ -1343,6 +1494,29 @@ HTML_PAGE = """<!DOCTYPE html>
 
   <script>
     let lastResult = null;
+
+    /* Theme Management (Default: White / Light Mode) */
+    function applyTheme(theme) {
+      if (theme === 'dark') {
+        document.documentElement.setAttribute('data-theme', 'dark');
+        const txt = document.getElementById('themeText');
+        if (txt) txt.textContent = 'Light Mode';
+      } else {
+        document.documentElement.removeAttribute('data-theme');
+        const txt = document.getElementById('themeText');
+        if (txt) txt.textContent = 'Dark Mode';
+      }
+      localStorage.setItem('truthpulse-theme', theme);
+    }
+
+    function toggleTheme() {
+      const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+      applyTheme(isDark ? 'light' : 'dark');
+    }
+
+    // Default to 'light' (white theme) as requested
+    const savedTheme = localStorage.getItem('truthpulse-theme') || 'light';
+    applyTheme(savedTheme);
 
     const SAMPLES = {
       1: `BREAKING: Secret Government Document Confirms Banned Energy Technology Silenced Forever!
@@ -1489,7 +1663,6 @@ In a shocking turn of events that the mainstream media is completely refusing to
       });
     }
 
-    // Auto-load sample 1 on initial page visit for instant inspection
     window.addEventListener('DOMContentLoaded', () => {
       loadSample(1);
     });
