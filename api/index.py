@@ -38,12 +38,14 @@ STOP_WORDS = {
     'has', 'he', 'in', 'is', 'it', 'its', 'of', 'on', 'that', 'the',
     'to', 'was', 'were', 'will', 'with', 'this', 'their', 'they',
     'breaking', 'shocking', 'confirmed', 'report', 'sources', 'forever',
-    'silenced', 'mass', 'completely', 'unnamed', 'exclusive', 'urgent'
+    'silenced', 'mass', 'completely', 'unnamed', 'exclusive', 'urgent',
+    'in', 'a', 'turn', 'events', 'media', 'refusing', 'cover', 'whistleblower'
 }
 
-def clean_extracted_query(text: str) -> str:
-    """Distill article text or headline into a clean 4-6 word search query."""
-    cleaned = re.sub(r'[\"\'\:\!\?\.\,\-\_\[\]\(\)\{\}\<\>\/\\\#\$\%\^\&\*\+\=]', ' ', text)
+def clean_extracted_query(text: str, title: str = "") -> str:
+    """Distill headline + article text into a high-precision 4-6 word search query."""
+    combined = (title + " " + text).strip() if title else text.strip()
+    cleaned = re.sub(r'[\"\'\:\!\?\.\,\-\_\[\]\(\)\{\}\<\>\/\\\#\$\%\^\&\*\+\=]', ' ', combined)
     words = [w for w in cleaned.split() if len(w) > 2]
     meaningful = [w for w in words if w.lower() not in STOP_WORDS]
     if not meaningful:
@@ -135,8 +137,37 @@ def search_live_ground_truth(query: str, max_results: int = 4) -> List[Dict[str,
     return sources[:max_results]
 
 
+def extract_query_via_llm(article_text: str, title: str, api_key: str, model_name: str = "llama-3.1-8b-instant") -> str:
+    """Uses the Extractor LLM to generate a concise 5-7 keyword fact-checking search query."""
+    try:
+        import groq
+        client = groq.Groq(api_key=api_key)
+        prompt = (
+            "You are an AI research query generator.\n"
+            "Analyze the user's article title and text and extract the core claim and entities.\n"
+            "Output ONLY ONE concise search query (maximum 7 words) for a search engine to fact-check this claim.\n"
+            "Do not output quotes, explanations, or extra commentary."
+        )
+        user_content = f"Title: {title}\nText: {article_text[:600]}" if title else article_text[:600]
+        resp = client.chat.completions.create(
+            messages=[
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": user_content}
+            ],
+            model=model_name or "llama-3.1-8b-instant",
+            temperature=0.0,
+            max_tokens=25,
+        )
+        extracted = resp.choices[0].message.content.strip()
+        cleaned = re.sub(r'["\'\:\!\?\.\,\-\_]', ' ', extracted)
+        return " ".join(cleaned.split()[:7])
+    except Exception:
+        return clean_extracted_query(article_text, title)
+
+
 def run_groq_reasoning(
     article_text: str,
+    title: str,
     sources: List[Dict[str, str]],
     api_key: str,
     model_name: str = "llama-3.3-70b-versatile"
@@ -174,12 +205,13 @@ Explanation: 1 concise paragraph explaining why it is false or confirmed using t
 </context>"""
 
     chosen_model = model_name or "llama-3.3-70b-versatile"
+    user_payload = f"Title: {title}\n\nArticle Content:\n{article_text}" if title else article_text
 
     try:
         chat_completion = client.chat.completions.create(
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Please verify this article/claim:\n\n{article_text}"}
+                {"role": "user", "content": f"Please verify this article/claim:\n\n{user_payload}"}
             ],
             model=chosen_model,
             temperature=0.1,
@@ -193,7 +225,7 @@ Explanation: 1 concise paragraph explaining why it is false or confirmed using t
                 chat_completion = client.chat.completions.create(
                     messages=[
                         {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": f"Please verify this article/claim:\n\n{article_text}"}
+                        {"role": "user", "content": f"Please verify this article/claim:\n\n{user_payload}"}
                     ],
                     model="llama-3.1-8b-instant",
                     temperature=0.1,
@@ -207,6 +239,7 @@ Explanation: 1 concise paragraph explaining why it is false or confirmed using t
 
 def run_heuristic_fact_engine(
     article_text: str,
+    title: str,
     sources: List[Dict[str, str]],
     query: str
 ) -> Dict[str, Any]:
@@ -215,7 +248,8 @@ def run_heuristic_fact_engine(
     Zero external credential requirement. Accurately synthesizes retrieved sources,
     cross-references debunking markers, and generates the exact structured report format.
     """
-    text_lower = article_text.lower()
+    full_text = (title + " " + article_text).strip()
+    text_lower = full_text.lower()
     sources_text = " ".join([f"{s.get('title', '')} {s.get('snippet', '')}" for s in sources]).lower()
 
     # Heuristic markers & weights
@@ -240,10 +274,10 @@ def run_heuristic_fact_engine(
     debunk_score = sum(3 for w in strong_debunk if w in sources_text) + sum(1 for w in mod_debunk if w in sources_text)
     corrob_score = sum(2 for w in corroboration if w in sources_text) + sum(1 for w in corroboration if w in text_lower)
 
-    # Extract primary claim
+    # Extract primary claims from title and sentences
     sentences = [s.strip() for s in re.split(r'[\.\!\?\n]', article_text) if len(s.strip()) > 15]
-    primary_claim = sentences[0] if sentences else article_text[:120]
-    secondary_claim = sentences[1] if len(sentences) > 1 else "Assertions regarding institutional actions or scientific findings."
+    primary_claim = title if title else (sentences[0] if sentences else article_text[:120])
+    secondary_claim = sentences[0] if title and sentences else (sentences[1] if len(sentences) > 1 else "Assertions regarding institutional actions or scientific findings.")
 
     # Determine verdict based on balance of evidence
     if sens_score >= 2 or (debunk_score >= 3 and corrob_score < 4):
@@ -283,7 +317,6 @@ def run_heuristic_fact_engine(
             f"Explanation: Live indexed sources do not substantiate the dramatic claims made in the text. Exercise skepticism and await confirmation from accredited sources."
         )
 
-    # Format URLs list
     urls_markdown = "\n".join([f"- [{s.get('title', 'Source')}]({s.get('url', '#')})" for s in sources]) if sources else "- No verified sources indexed."
 
     report_markdown = f"""**Claims Made**
@@ -351,14 +384,13 @@ def parse_report_sections(report_text: str) -> Dict[str, Any]:
 # Request Models
 # ---------------------------------------------------------
 
-class LangServeInput(BaseModel):
-    input: Any
-    config: Optional[Dict[str, Any]] = None
-
 class DirectVerifyInput(BaseModel):
     text: str
+    title: Optional[str] = ""
+    session_id: Optional[str] = "session_default"
     api_key: Optional[str] = None
     model: Optional[str] = "llama-3.3-70b-versatile"
+    extractor_model: Optional[str] = "llama-3.1-8b-instant"
 
 
 # ---------------------------------------------------------
@@ -392,37 +424,51 @@ async def langserve_invoke(payload: Dict[str, Any]):
     """
     LangServe-compliant invocation route:
     Accepts:
-      {"input": {"input": "article text"}, "config": {"configurable": {"session_id": "123"}}}
+      {"input": {"input": "article text", "title": "optional headline"}, "config": {"configurable": {"session_id": "123"}}}
     Or flat:
       {"input": "article text"}
     """
     start_time = time.time()
     
     article_text = ""
+    title = ""
+    session_id = "default_session"
+
+    if "config" in payload and isinstance(payload["config"], dict):
+        configurable = payload["config"].get("configurable", {})
+        session_id = configurable.get("session_id", "default_session")
+
     if "input" in payload:
         if isinstance(payload["input"], dict):
-            article_text = payload["input"].get("input") or payload["input"].get("text") or ""
+            article_text = payload["input"].get("input") or payload["input"].get("text") or payload["input"].get("body") or ""
+            title = payload["input"].get("title") or ""
         elif isinstance(payload["input"], str):
             article_text = payload["input"]
     if not article_text and "text" in payload:
         article_text = payload["text"]
+    if not title and "title" in payload:
+        title = payload["title"]
 
-    if not article_text:
-        raise HTTPException(status_code=400, detail="Missing required field 'input' in request payload.")
+    if not article_text and not title:
+        raise HTTPException(status_code=400, detail="Missing required field 'input' or 'text' in request payload.")
 
     groq_key = os.environ.get("GROQ_API_KEY")
-    query = clean_extracted_query(article_text)
+    if groq_key:
+        query = extract_query_via_llm(article_text, title, groq_key, "llama-3.1-8b-instant")
+    else:
+        query = clean_extracted_query(article_text, title)
+
     sources = search_live_ground_truth(query, max_results=4)
 
     if groq_key:
-        result = run_groq_reasoning(article_text, sources, groq_key)
+        result = run_groq_reasoning(article_text, title, sources, groq_key)
         report_content = result["report"]
         parsed = parse_report_sections(report_content)
         verdict = parsed["verdict_badge"]
         confidence = 95
         engine = result["engine"]
     else:
-        result = run_heuristic_fact_engine(article_text, sources, query)
+        result = run_heuristic_fact_engine(article_text, title, sources, query)
         report_content = result["report"]
         verdict = result["verdict"]
         confidence = result["confidence"]
@@ -438,6 +484,7 @@ async def langserve_invoke(payload: Dict[str, Any]):
             "engine": engine,
             "search_query": query,
             "sources": sources,
+            "session_id": session_id,
             "latency_ms": duration_ms
         }
     }
@@ -446,20 +493,27 @@ async def langserve_invoke(payload: Dict[str, Any]):
 @app.post("/api/verify")
 async def api_verify(req: DirectVerifyInput):
     """
-    Standard REST API endpoint for rich verification with custom API Key support.
+    Standard REST API endpoint for rich verification with Title + Body + Session ID support.
     """
     start_time = time.time()
     article_text = req.text.strip()
-    if not article_text:
-        raise HTTPException(status_code=400, detail="Article text cannot be empty.")
+    title = (req.title or "").strip()
+
+    if not article_text and not title:
+        raise HTTPException(status_code=400, detail="Article text or headline cannot be empty.")
 
     groq_key = (req.api_key or "").strip() or os.environ.get("GROQ_API_KEY")
-    query = clean_extracted_query(article_text)
+
+    if groq_key:
+        query = extract_query_via_llm(article_text, title, groq_key, req.extractor_model or "llama-3.1-8b-instant")
+    else:
+        query = clean_extracted_query(article_text, title)
+
     sources = search_live_ground_truth(query, max_results=4)
 
     if groq_key:
         try:
-            result = run_groq_reasoning(article_text, sources, groq_key, req.model or "llama-3.3-70b-versatile")
+            result = run_groq_reasoning(article_text, title, sources, groq_key, req.model or "llama-3.3-70b-versatile")
             report_content = result["report"]
             parsed = parse_report_sections(report_content)
             verdict = parsed["verdict_badge"]
@@ -467,7 +521,7 @@ async def api_verify(req: DirectVerifyInput):
             engine = result["engine"]
             claims = parsed["claims"]
         except Exception as e:
-            result = run_heuristic_fact_engine(article_text, sources, query)
+            result = run_heuristic_fact_engine(article_text, title, sources, query)
             report_content = result["report"]
             verdict = result["verdict"]
             confidence = result["confidence"]
@@ -475,7 +529,7 @@ async def api_verify(req: DirectVerifyInput):
             parsed = parse_report_sections(report_content)
             claims = parsed["claims"]
     else:
-        result = run_heuristic_fact_engine(article_text, sources, query)
+        result = run_heuristic_fact_engine(article_text, title, sources, query)
         report_content = result["report"]
         verdict = result["verdict"]
         confidence = result["confidence"]
@@ -490,7 +544,9 @@ async def api_verify(req: DirectVerifyInput):
         "verdict": verdict,
         "confidence": confidence,
         "engine": engine,
+        "title": title,
         "search_query": query,
+        "session_id": req.session_id or "session_default",
         "claims": claims,
         "sources": sources,
         "report_markdown": report_content,
@@ -501,6 +557,7 @@ async def api_verify(req: DirectVerifyInput):
 
 # ---------------------------------------------------------
 # Executive UI (Default White / Light Mode + Dark Toggle)
+# Includes: Title + Body Inputs, Live Status Trays, Session History
 # ---------------------------------------------------------
 
 HTML_PAGE = """<!DOCTYPE html>
@@ -563,6 +620,8 @@ HTML_PAGE = """<!DOCTYPE html>
       --code-block-bg: #0f172a;
       --code-block-border: #1e293b;
       --code-block-color: #38bdf8;
+      --tray-bg: #f8fafc;
+      --tray-border: #e2e8f0;
     }
 
     [data-theme="dark"] {
@@ -612,6 +671,8 @@ HTML_PAGE = """<!DOCTYPE html>
       --code-block-bg: #0b1120;
       --code-block-border: #1e293b;
       --code-block-color: #38bdf8;
+      --tray-bg: #0b1120;
+      --tray-border: #1e293b;
     }
 
     * {
@@ -632,7 +693,7 @@ HTML_PAGE = """<!DOCTYPE html>
     }
 
     .container {
-      max-width: 1180px;
+      max-width: 1200px;
       margin: 0 auto;
       padding: 2rem 1.5rem;
       width: 100%;
@@ -654,7 +715,7 @@ HTML_PAGE = """<!DOCTYPE html>
       justify-content: space-between;
       align-items: center;
       padding: 0.85rem 1.5rem;
-      max-width: 1180px;
+      max-width: 1200px;
       margin: 0 auto;
     }
 
@@ -740,24 +801,15 @@ HTML_PAGE = """<!DOCTYPE html>
       border-color: var(--card-border-hover);
     }
 
-    /* Theme Icon Visibility */
-    :root:not([data-theme="dark"]) .sun-icon {
-      display: none;
-    }
-    :root:not([data-theme="dark"]) .moon-icon {
-      display: inline-block;
-    }
-    [data-theme="dark"] .moon-icon {
-      display: none;
-    }
-    [data-theme="dark"] .sun-icon {
-      display: inline-block;
-    }
+    :root:not([data-theme="dark"]) .sun-icon { display: none; }
+    :root:not([data-theme="dark"]) .moon-icon { display: inline-block; }
+    [data-theme="dark"] .moon-icon { display: none; }
+    [data-theme="dark"] .sun-icon { display: inline-block; }
 
     /* Hero Banner */
     .hero {
       text-align: center;
-      padding: 2.25rem 0 1.25rem;
+      padding: 2rem 0 1rem;
     }
 
     .hero-badge {
@@ -771,15 +823,15 @@ HTML_PAGE = """<!DOCTYPE html>
       color: var(--hero-badge-color);
       font-size: 0.775rem;
       font-weight: 700;
-      margin-bottom: 1.1rem;
+      margin-bottom: 1rem;
       font-family: 'JetBrains Mono', monospace;
     }
 
     .hero-title {
-      font-size: 2.4rem;
+      font-size: 2.35rem;
       font-weight: 800;
       letter-spacing: -0.03em;
-      margin-bottom: 0.6rem;
+      margin-bottom: 0.5rem;
       background: var(--hero-title-grad);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
@@ -800,8 +852,8 @@ HTML_PAGE = """<!DOCTYPE html>
       background: var(--card-bg);
       border: 1px solid var(--card-border);
       border-radius: 12px;
-      padding: 1rem 1.5rem;
-      margin: 1.75rem 0 1.25rem;
+      padding: 0.9rem 1.4rem;
+      margin: 1.5rem 0 1rem;
       gap: 0.75rem;
       flex-wrap: wrap;
       box-shadow: var(--shadow-sm);
@@ -847,7 +899,7 @@ HTML_PAGE = """<!DOCTYPE html>
       margin-top: 0.5rem;
     }
 
-    @media (max-width: 900px) {
+    @media (max-width: 960px) {
       .grid {
         grid-template-columns: 1fr;
       }
@@ -880,17 +932,46 @@ HTML_PAGE = """<!DOCTYPE html>
       color: var(--text-main);
     }
 
-    /* Textarea Controls */
+    /* Inputs */
+    .input-label {
+      display: block;
+      font-size: 0.775rem;
+      font-weight: 700;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 0.4rem;
+    }
+
+    .headline-input {
+      width: 100%;
+      background: var(--input-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      padding: 0.7rem 0.9rem;
+      color: var(--text-main);
+      font-size: 0.9rem;
+      font-weight: 600;
+      outline: none;
+      margin-bottom: 1rem;
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .headline-input:focus {
+      border-color: var(--accent-indigo);
+      box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.12);
+    }
+
     textarea {
       width: 100%;
-      height: 180px;
+      height: 140px;
       background: var(--input-bg);
       border: 1px solid var(--card-border);
       border-radius: 10px;
-      padding: 1rem;
+      padding: 0.9rem;
       color: var(--text-main);
       font-family: inherit;
-      font-size: 0.925rem;
+      font-size: 0.9rem;
       resize: vertical;
       outline: none;
       transition: border-color 0.2s ease, box-shadow 0.2s ease;
@@ -903,7 +984,7 @@ HTML_PAGE = """<!DOCTYPE html>
     }
 
     .samples-label {
-      font-size: 0.775rem;
+      font-size: 0.75rem;
       font-weight: 700;
       color: var(--text-dim);
       text-transform: uppercase;
@@ -1051,6 +1132,51 @@ HTML_PAGE = """<!DOCTYPE html>
       opacity: 0.6;
       cursor: not-allowed;
       transform: none;
+    }
+
+    /* Live Pipeline Status Trays */
+    .status-trays-box {
+      margin-top: 1.25rem;
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      overflow: hidden;
+      display: none;
+    }
+
+    .status-trays-box.visible {
+      display: block;
+    }
+
+    .tray-item {
+      padding: 0.75rem 1rem;
+      border-bottom: 1px solid var(--card-border);
+      background: var(--tray-bg);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 0.8rem;
+    }
+
+    .tray-item:last-child {
+      border-bottom: none;
+    }
+
+    .tray-label {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-weight: 600;
+      color: var(--text-main);
+    }
+
+    .tray-val {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.75rem;
+      color: var(--accent-indigo);
+      background: var(--pill-bg);
+      padding: 2px 8px;
+      border-radius: 4px;
+      border: 1px solid var(--card-border);
     }
 
     /* Verdict Banner (Right column) */
@@ -1230,6 +1356,60 @@ HTML_PAGE = """<!DOCTYPE html>
       background: var(--pill-hover);
     }
 
+    /* Session History Tray */
+    .session-tray-box {
+      margin-top: 1.5rem;
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      background: var(--card-bg);
+      padding: 1rem;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .session-title {
+      font-size: 0.85rem;
+      font-weight: 800;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 0.75rem;
+      color: var(--text-main);
+    }
+
+    .session-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+      max-height: 180px;
+      overflow-y: auto;
+    }
+
+    .session-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.5rem 0.75rem;
+      background: var(--pill-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 6px;
+      font-size: 0.775rem;
+      cursor: pointer;
+      transition: background 0.15s ease;
+    }
+
+    .session-item:hover {
+      background: var(--pill-hover);
+    }
+
+    .session-item-text {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 320px;
+      font-weight: 600;
+    }
+
     /* API Reference Box */
     .api-drawer {
       margin-top: 2rem;
@@ -1322,10 +1502,10 @@ HTML_PAGE = """<!DOCTYPE html>
     <div class="hero">
       <div class="hero-badge">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-        <span>REAL-TIME RETRIEVAL-AUGMENTED VERIFICATION</span>
+        <span>REAL-TIME DUAL-MODEL RAG FACT-CHECKER</span>
       </div>
       <h1 class="hero-title">Automated Fake News & Misinformation Detector</h1>
-      <p class="hero-subtitle">Cross-examine news articles and breaking claims against live authoritative search indexes using dual-engine RAG and Groq LPUs.</p>
+      <p class="hero-subtitle">Cross-examine news headlines and long-form narrative claims against live authoritative search indexes using Groq LPUs.</p>
     </div>
 
     <!-- Pipeline Architecture Tracker -->
@@ -1358,18 +1538,22 @@ HTML_PAGE = """<!DOCTYPE html>
         <div class="card-header">
           <h2 class="card-title">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-            Input Claim or Article
+            Fact-Check Input
           </h2>
-          <span style="font-size: 0.75rem; color: var(--text-dim);" id="charCount">0 characters</span>
+          <span style="font-size: 0.75rem; color: var(--text-dim);" id="sessionBadge">Session: default_session</span>
         </div>
 
-        <textarea id="articleInput" placeholder="Paste article headline, social media claim, or news snippet here to fact check..."></textarea>
+        <label class="input-label">Article Headline / Title (Optional)</label>
+        <input type="text" id="titleInput" class="headline-input" placeholder="e.g., BREAKING: Secret Government Document Confirms Banned Energy...">
+
+        <label class="input-label">Article Body / Claim Content</label>
+        <textarea id="articleInput" placeholder="Paste full news article text, claim statement, or social media narrative here..."></textarea>
 
         <div class="samples-label">Or test with preset sample claims:</div>
         <div class="samples-grid">
           <div class="sample-pill" onclick="loadSample(1)">
             <span class="sample-tag tag-fake">HOAX</span>
-            <span>Secret Govt Banned Free Energy Silenced</span>
+            <span>Secret Govt Banned Energy Technology</span>
           </div>
           <div class="sample-pill" onclick="loadSample(2)">
             <span class="sample-tag tag-fake">HOAX</span>
@@ -1381,14 +1565,14 @@ HTML_PAGE = """<!DOCTYPE html>
           </div>
           <div class="sample-pill" onclick="loadSample(4)">
             <span class="sample-tag tag-real">REAL</span>
-            <span>Federal Reserve Emergency Interest Rate Update</span>
+            <span>Federal Reserve Policy Rate Announcement</span>
           </div>
         </div>
 
         <!-- Advanced Engine Settings Toggle -->
         <div class="settings-toggle" onclick="toggleSettings()">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-          <span id="settingsToggleText">Configure Custom Groq API Key (Optional)</span>
+          <span id="settingsToggleText">Configure Custom Models & Groq API Key</span>
         </div>
 
         <div class="settings-box" id="settingsBox">
@@ -1398,9 +1582,21 @@ HTML_PAGE = """<!DOCTYPE html>
               <input type="password" id="groqApiKey" placeholder="gsk_... (leave empty for built-in NLP engine)">
             </div>
             <div class="input-group">
+              <label>Session ID</label>
+              <input type="text" id="sessionId" value="user_session_1">
+            </div>
+          </div>
+          <div class="input-row">
+            <div class="input-group">
+              <label>Extractor Model (5-7 Word Query)</label>
+              <select id="groqExtractorModel">
+                <option value="llama-3.1-8b-instant">Llama 3.1 8B Instant (Fast Extractor)</option>
+              </select>
+            </div>
+            <div class="input-group">
               <label>Reasoning Model</label>
               <select id="groqModel">
-                <option value="llama-3.3-70b-versatile">Llama 3.3 70B Versatile (Deep Reasoning)</option>
+                <option value="llama-3.3-70b-versatile">Llama 3.3 70B Versatile (Deep Fact Analysis)</option>
                 <option value="llama-3.1-8b-instant">Llama 3.1 8B Instant (Ultra-Fast)</option>
               </select>
             </div>
@@ -1414,6 +1610,31 @@ HTML_PAGE = """<!DOCTYPE html>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
           <span id="btnText">Verify Claim with RAG Engine</span>
         </button>
+
+        <!-- Live Status Trays (Teammate feature) -->
+        <div class="status-trays-box" id="statusTrays">
+          <div class="tray-item">
+            <div class="tray-label">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <span>1. Distilled Search Query</span>
+            </div>
+            <span class="tray-val" id="trayQuery">--</span>
+          </div>
+          <div class="tray-item">
+            <div class="tray-label">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+              <span>2. Web Index Evidence</span>
+            </div>
+            <span class="tray-val" id="traySources">-- sources retrieved</span>
+          </div>
+          <div class="tray-item">
+            <div class="tray-label">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+              <span>3. Fact-Checking Engine</span>
+            </div>
+            <span class="tray-val" id="trayEngine">--</span>
+          </div>
+        </div>
       </div>
 
       <!-- Right Column: Verification Results -->
@@ -1429,7 +1650,7 @@ HTML_PAGE = """<!DOCTYPE html>
         <div class="verdict-banner badge-debunked" id="verdictBanner">
           <div class="verdict-info">
             <h3 id="verdictHeading">Awaiting Input</h3>
-            <p id="verdictSub">Enter a claim or select a sample above to begin verification.</p>
+            <p id="verdictSub">Enter a headline or claim details above to begin verification.</p>
           </div>
           <div class="confidence-pill" id="confidencePill">--%</div>
         </div>
@@ -1466,6 +1687,17 @@ HTML_PAGE = """<!DOCTYPE html>
             Copy JSON
           </button>
         </div>
+
+        <!-- Session Verification History Tray (Teammate feature) -->
+        <div class="session-tray-box" id="sessionTrayBox">
+          <div class="session-title">
+            <span>Session Verification History</span>
+            <span style="font-size: 0.7rem; color: var(--text-dim);" id="sessionHistoryCount">0 verifications</span>
+          </div>
+          <ul class="session-list" id="sessionList">
+            <li style="font-size: 0.75rem; color: var(--text-dim); padding: 0.4rem;">No claims verified yet this session.</li>
+          </ul>
+        </div>
       </div>
     </div>
 
@@ -1479,12 +1711,12 @@ HTML_PAGE = """<!DOCTYPE html>
       <div style="font-size: 0.75rem; color: var(--accent-indigo); font-weight: 700;">LangServe POST /fact-check/invoke:</div>
       <div class="code-block">curl -X POST https://fakenewsclassification.vercel.app/fact-check/invoke \
   -H "Content-Type: application/json" \
-  -d '{"input": {"input": "Secret government document confirms banned free energy"}, "config": {"configurable": {"session_id": "team_session_1"}}}'</div>
+  -d '{"input": {"title": "Secret government banned energy", "input": "In a shocking turn of events..."}, "config": {"configurable": {"session_id": "team_session_1"}}}'</div>
 
       <div style="font-size: 0.75rem; color: var(--accent-indigo); font-weight: 700; margin-top: 0.75rem;">Direct REST API POST /api/verify:</div>
       <div class="code-block">curl -X POST https://fakenewsclassification.vercel.app/api/verify \
   -H "Content-Type: application/json" \
-  -d '{"text": "James Webb Space Telescope detects water vapor on exoplanet"}'</div>
+  -d '{"title": "James Webb Detection", "text": "Astronomers detect water vapor on exoplanet", "session_id": "session_1"}'</div>
     </div>
   </div>
 
@@ -1494,6 +1726,7 @@ HTML_PAGE = """<!DOCTYPE html>
 
   <script>
     let lastResult = null;
+    let sessionHistory = [];
 
     /* Theme Management (Default: White / Light Mode) */
     function applyTheme(theme) {
@@ -1514,41 +1747,45 @@ HTML_PAGE = """<!DOCTYPE html>
       applyTheme(isDark ? 'light' : 'dark');
     }
 
-    // Default to 'light' (white theme) as requested
     const savedTheme = localStorage.getItem('truthpulse-theme') || 'light';
     applyTheme(savedTheme);
 
     const SAMPLES = {
-      1: `BREAKING: Secret Government Document Confirms Banned Energy Technology Silenced Forever!
-In a shocking turn of events that the mainstream media is completely refusing to cover, an anonymous high-level whistleblower has finally stepped forward with absolute proof of a massive cover-up. According to unverified documents leaked late last night, top-tier global scientists successfully engineered an entirely free, self-sustaining alternative energy source capable of powering the entire planet without a single ounce of fossil fuels or electricity grids. Sources claim that the project was seized by corporate billionaires during a midnight raid on the laboratory.`,
-      2: `SHOCKING ADMISSION: NASA officials have leaked footage confirming that the 1969 Apollo 11 Moon Landing was entirely staged on an abandoned Hollywood soundstage in the Nevada desert. Whistleblowers allege that cold war pressure forced government directors to fake lunar surface transmissions.`,
-      3: `A team of international astrophysicists utilizing the James Webb Space Telescope has detected definitive spectroscopic signatures of atmospheric water vapor on a rocky exoplanet orbiting within its host star habitable zone, published in latest astronomical journals.`,
-      4: `The Federal Reserve Board of Governors has released its official policy statement following the latest consumer price index report, holding the benchmark federal funds rate steady while monitoring labor market resilience and global financial stability.`
+      1: {
+        title: "BREAKING: Secret Government Document Confirms Banned Energy Technology Silenced Forever!",
+        body: `In a shocking turn of events that the mainstream media is completely refusing to cover, an anonymous high-level whistleblower has finally stepped forward with absolute proof of a massive cover-up. According to unverified documents leaked late last night, top-tier global scientists successfully engineered an entirely free, self-sustaining alternative energy source capable of powering the entire planet without a single ounce of fossil fuels or electricity grids. Sources claim that the project was seized by corporate billionaires during a midnight raid on the laboratory.`
+      },
+      2: {
+        title: "SHOCKING ADMISSION: NASA Leaked Footage Confirms 1969 Moon Landing Staged in Nevada",
+        body: `NASA officials have allegedly leaked confidential soundstage footage confirming that the 1969 Apollo 11 Moon Landing was filmed in a secret hangar in the Nevada desert. Whistleblowers allege cold war pressure forced government directors to fabricate lunar transmissions.`
+      },
+      3: {
+        title: "Astronomers Confirm Spectroscopic Detection of Atmospheric Water Vapor on Rocky Exoplanet",
+        body: `An international team of astrophysicists utilizing the James Webb Space Telescope has published confirmed spectroscopic signatures of water vapor in the atmosphere of a rocky exoplanet orbiting within its host star habitable zone.`
+      },
+      4: {
+        title: "Federal Reserve Board Releases Policy Statement Following Consumer Price Index Report",
+        body: `The Federal Reserve Board of Governors has released its official policy statement following the consumer price index report, holding benchmark interest rates steady while monitoring ongoing economic conditions.`
+      }
     };
 
     function loadSample(id) {
-      document.getElementById('articleInput').value = SAMPLES[id];
-      updateCharCount();
+      document.getElementById('titleInput').value = SAMPLES[id].title;
+      document.getElementById('articleInput').value = SAMPLES[id].body;
     }
 
     function toggleSettings() {
       const box = document.getElementById('settingsBox');
       box.classList.toggle('open');
       const text = document.getElementById('settingsToggleText');
-      text.textContent = box.classList.contains('open') ? 'Hide API Key Settings' : 'Configure Custom Groq API Key (Optional)';
+      text.textContent = box.classList.contains('open') ? 'Hide Custom Engine Settings' : 'Configure Custom Models & Groq API Key';
     }
-
-    function updateCharCount() {
-      const len = document.getElementById('articleInput').value.length;
-      document.getElementById('charCount').textContent = `${len} characters`;
-    }
-
-    document.getElementById('articleInput').addEventListener('input', updateCharCount);
 
     async function runVerification() {
+      const title = document.getElementById('titleInput').value.trim();
       const text = document.getElementById('articleInput').value.trim();
-      if (!text) {
-        alert("Please enter a claim or news article text first.");
+      if (!title && !text) {
+        alert("Please enter a headline or article text first.");
         return;
       }
 
@@ -1559,15 +1796,20 @@ In a shocking turn of events that the mainstream media is completely refusing to
 
       const apiKey = document.getElementById('groqApiKey').value.trim();
       const model = document.getElementById('groqModel').value;
+      const extractorModel = document.getElementById('groqExtractorModel').value;
+      const sessionId = document.getElementById('sessionId').value.trim() || 'default_session';
 
       try {
         const response = await fetch('/api/verify', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
+            title: title,
             text: text,
+            session_id: sessionId,
             api_key: apiKey || null,
-            model: model
+            model: model,
+            extractor_model: extractorModel
           })
         });
 
@@ -1579,6 +1821,7 @@ In a shocking turn of events that the mainstream media is completely refusing to
         const data = await response.json();
         lastResult = data;
         renderResults(data);
+        addToSessionHistory(data);
       } catch (err) {
         alert("Verification failed: " + err.message);
       } finally {
@@ -1609,6 +1852,12 @@ In a shocking turn of events that the mainstream media is completely refusing to
         banner.classList.add('badge-misleading');
         sub.textContent = 'Unsubstantiated or contains significant factual exaggerations.';
       }
+
+      // Update Live Status Trays
+      document.getElementById('statusTrays').classList.add('visible');
+      document.getElementById('trayQuery').textContent = data.search_query;
+      document.getElementById('traySources').textContent = `${(data.sources || []).length} verified sources`;
+      document.getElementById('trayEngine').textContent = data.engine;
 
       // Claims
       const claimsList = document.getElementById('claimsList');
@@ -1647,6 +1896,30 @@ In a shocking turn of events that the mainstream media is completely refusing to
 
       // Report
       document.getElementById('reportPreview').textContent = data.report_markdown;
+    }
+
+    function addToSessionHistory(data) {
+      sessionHistory.unshift(data);
+      const list = document.getElementById('sessionList');
+      const count = document.getElementById('sessionHistoryCount');
+      count.textContent = `${sessionHistory.length} verifications`;
+
+      list.innerHTML = '';
+      sessionHistory.forEach((item, idx) => {
+        const li = document.createElement('li');
+        li.className = 'session-item';
+        li.onclick = () => {
+          lastResult = item;
+          renderResults(item);
+        };
+        const badgeClass = item.verdict.includes('DEBUNKED') ? 'tag-fake' : (item.verdict.includes('REAL') ? 'tag-real' : 'tag-fake');
+        const displayTitle = item.title || item.search_query || 'Article Claim';
+        li.innerHTML = `
+          <span class="session-item-text">${displayTitle}</span>
+          <span class="sample-tag ${badgeClass}">${item.verdict.split('/')[0].trim()}</span>
+        `;
+        list.appendChild(li);
+      });
     }
 
     function copyReport() {
